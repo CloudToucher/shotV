@@ -13,6 +13,7 @@ export class InputController {
   }
 
   private dashPressed = false
+  private restartPressed = false
   private weaponSwitch: 1 | 2 | 3 | null = null
 
   constructor(host: HTMLElement) {
@@ -37,10 +38,12 @@ export class InputController {
       hasPointer: this.pointer.hasPointer,
       shootHeld: this.pointer.shootHeld,
       dashPressed: this.dashPressed,
+      restartPressed: this.restartPressed,
       weaponSwitch: this.weaponSwitch,
     }
 
     this.dashPressed = false
+    this.restartPressed = false
     this.weaponSwitch = null
 
     return snapshot
@@ -72,6 +75,8 @@ export class InputController {
         this.weaponSwitch = 2
       } else if (event.code === 'Digit3') {
         this.weaponSwitch = 3
+      } else if (event.code === 'KeyR') {
+        this.restartPressed = true
       }
     }
 

@@ -16,8 +16,8 @@ export const weaponLoadout: WeaponDefinition[] = [
   {
     slot: 1,
     id: 'machineGun',
-    label: '机枪',
-    hint: '连续压制，中距离稳定输出',
+    label: 'Machine Gun',
+    hint: 'High cadence suppression with stable mid-range damage.',
     cooldown: 0.085,
     range: 560,
     effectWidth: 4.5,
@@ -26,8 +26,8 @@ export const weaponLoadout: WeaponDefinition[] = [
   {
     slot: 2,
     id: 'grenade',
-    label: '榴弹',
-    hint: '短中距离抛投，落点爆炸',
+    label: 'Grenade',
+    hint: 'Short throw arc with blast damage at the landing point.',
     cooldown: 0.46,
     range: 360,
     effectWidth: 0,
@@ -37,8 +37,8 @@ export const weaponLoadout: WeaponDefinition[] = [
   {
     slot: 3,
     id: 'sniper',
-    label: '狙击',
-    hint: '无限距离重型弹体，强反馈开火',
+    label: 'Sniper',
+    hint: 'Piercing precision shot with heavy single-line damage.',
     cooldown: 0.72,
     range: 100000,
     effectWidth: 9,

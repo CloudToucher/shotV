@@ -3,11 +3,11 @@
     "Bahnschrift", "Segoe UI Variable Display", "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
   line-height: 1.5;
   font-weight: 400;
-  color: #143245;
+  color: #d9f7ff;
   background:
-    radial-gradient(circle at 18% 12%, rgba(93, 215, 255, 0.24), transparent 24%),
-    radial-gradient(circle at 82% 18%, rgba(255, 143, 66, 0.12), transparent 20%),
-    linear-gradient(180deg, #f8fdff 0%, #eaf7fc 58%, #e3f2f8 100%);
+    radial-gradient(circle at 50% -4%, rgba(93, 215, 255, 0.16), transparent 28%),
+    radial-gradient(circle at 22% 20%, rgba(255, 143, 66, 0.08), transparent 18%),
+    linear-gradient(180deg, #061922 0%, #04131b 54%, #020a0f 100%);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -28,6 +28,7 @@ body,
 body {
   min-width: 320px;
   min-height: 100vh;
+  overflow: hidden;
 }
 
 button,

@@ -10,6 +10,7 @@ const BRAKE = 9.5
 const DASH_SPEED = 760
 const DASH_DURATION = 0.14
 const DASH_COOLDOWN = 0.65
+const PLAYER_RADIUS = 16
 
 export class PlayerAvatar {
   readonly container = new Container()
@@ -32,6 +33,8 @@ export class PlayerAvatar {
   private dashCooldown = 0
   private shotKick = 0
   private dashPulse = 0
+  private damagePulse = 0
+  private lifeRatio = 1
   private arrowDistanceBase = 38
 
   constructor() {
@@ -62,8 +65,38 @@ export class PlayerAvatar {
     this.container.position.set(x, y)
   }
 
+  reset(): void {
+    this.velocity.x = 0
+    this.velocity.y = 0
+    this.moveIntent.x = 0
+    this.moveIntent.y = 0
+    this.dashDirection.x = 0
+    this.dashDirection.y = -1
+    this.aimAngle = -Math.PI / 2
+    this.dashTime = 0
+    this.dashCooldown = 0
+    this.shotKick = 0
+    this.dashPulse = 0
+    this.damagePulse = 0
+    this.lifeRatio = 1
+    this.container.alpha = 1
+    this.container.rotation = 0
+    this.container.scale.set(1)
+    this.shell.rotation = 0
+    this.edge.rotation = 0
+    this.core.rotation = 0
+  }
+
   getPosition(): { x: number; y: number } {
     return { x: this.position.x, y: this.position.y }
+  }
+
+  getCollisionRadius(): number {
+    return PLAYER_RADIUS
+  }
+
+  isDashing(): boolean {
+    return this.dashTime > 0
   }
 
   setMoveIntent(x: number, y: number): void {
@@ -81,6 +114,14 @@ export class PlayerAvatar {
 
   setAimAngle(angle: number): void {
     this.aimAngle = angle
+  }
+
+  setLifeRatio(ratio: number): void {
+    this.lifeRatio = clamp(ratio, 0, 1)
+  }
+
+  flashDamage(intensity = 1): void {
+    this.damagePulse = Math.max(this.damagePulse, intensity)
   }
 
   setWeaponStyle(weaponType: WeaponType): void {
@@ -146,6 +187,7 @@ export class PlayerAvatar {
     this.dashCooldown = Math.max(0, this.dashCooldown - deltaSeconds)
     this.shotKick = Math.max(0, this.shotKick - deltaSeconds * 9)
     this.dashPulse = Math.max(0, this.dashPulse - deltaSeconds * 4.5)
+    this.damagePulse = Math.max(0, this.damagePulse - deltaSeconds * 5)
 
     if (this.dashTime > 0) {
       this.dashTime = Math.max(0, this.dashTime - deltaSeconds)
@@ -184,20 +226,25 @@ export class PlayerAvatar {
     const aimX = Math.cos(this.aimAngle)
     const aimY = Math.sin(this.aimAngle)
     const arrowDistance = this.arrowDistanceBase + this.shotKick * 8 + dashFactor * 10
+    const vitality = 0.7 + this.lifeRatio * 0.3
 
-    this.glow.alpha = 0.12 + speedFactor * 0.1 + dashFactor * 0.18 + (Math.sin(elapsedSeconds * 5.2) * 0.02 + 0.02)
-    this.glow.scale.set(1 + speedFactor * 0.2 + dashFactor * 0.16)
+    this.glow.alpha = 0.12 + speedFactor * 0.1 + dashFactor * 0.18 + this.damagePulse * 0.18 + (Math.sin(elapsedSeconds * 5.2) * 0.02 + 0.02)
+    this.glow.scale.set(1 + speedFactor * 0.2 + dashFactor * 0.16 + this.damagePulse * 0.12)
 
-    this.shell.scale.set(1 + dashFactor * 0.05, 1 + dashFactor * 0.05)
-    this.edge.alpha = 0.74 + dashFactor * 0.26
+    this.shell.scale.set(1 + dashFactor * 0.05 - this.damagePulse * 0.02, 1 + dashFactor * 0.05 + this.damagePulse * 0.03)
+    this.edge.alpha = 0.66 + dashFactor * 0.26 + this.damagePulse * 0.26
+    this.shell.alpha = 0.84 + this.lifeRatio * 0.16
+    this.container.alpha = 0.72 + vitality * 0.28
     this.shell.rotation = this.velocity.x * 0.0009
     this.edge.rotation = this.shell.rotation
     this.core.rotation = -this.shell.rotation * 1.4
+    this.core.alpha = 0.72 + vitality * 0.2 + this.damagePulse * 0.22
+    this.core.scale.set(1 + this.damagePulse * 0.26)
 
     this.arrowAnchor.position.set(aimX * arrowDistance, aimY * arrowDistance)
     this.arrowAnchor.rotation = this.aimAngle
     this.arrowAnchor.scale.set(1 + this.shotKick * 0.16 + dashFactor * 0.16)
-    this.arrowGlow.alpha = 0.22 + dashFactor * 0.24
+    this.arrowGlow.alpha = 0.22 + dashFactor * 0.24 + this.damagePulse * 0.1
   }
 
   destroy(): void {

@@ -80,5 +80,6 @@ const emptyInput = {
   hasPointer: false,
   shootHeld: false,
   dashPressed: false,
+  restartPressed: false,
   weaponSwitch: null,
 }

@@ -20,6 +20,7 @@ export interface InputSnapshot {
   hasPointer: boolean
   shootHeld: boolean
   dashPressed: boolean
+  restartPressed: boolean
   weaponSwitch: 1 | 2 | 3 | null
 }
 
