@@ -46,6 +46,8 @@ export interface HostileDefinition {
 
 export type ItemCategory = 'resource' | 'intel' | 'boss' | 'consumable'
 
+export type ItemRarity = 'common' | 'uncommon' | 'rare' | 'epic' | 'legendary'
+
 export interface ResourceBundle {
   salvage: number
   alloy: number
@@ -58,6 +60,7 @@ export interface ItemDefinition {
   shortLabel: string
   description: string
   category: ItemCategory
+  rarity: ItemRarity
   width: number
   height: number
   maxStack: number

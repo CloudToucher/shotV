@@ -1,19 +1,15 @@
 :root {
-  --app-bg: #f4fbff;
+  --app-bg: #f4f9fc;
   --app-bg-soft: #ffffff;
   --app-line: rgba(77, 185, 230, 0.28);
   --app-line-soft: rgba(77, 185, 230, 0.12);
-  --app-glow: rgba(255, 157, 77, 0.16);
+  --app-glow: rgba(77, 185, 230, 0.16);
   font-family:
-    "Bahnschrift", "Segoe UI Variable Display", "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    "Consolas", "Courier New", "Menlo", "Monaco", "PingFang SC", "Microsoft YaHei", monospace;
   line-height: 1.5;
   font-weight: 400;
   color: #143245;
-  background:
-    linear-gradient(135deg, rgba(77, 185, 230, 0.12), transparent 36%),
-    radial-gradient(circle at 18% 14%, var(--app-glow), transparent 22%),
-    radial-gradient(circle at 82% 0%, rgba(77, 185, 230, 0.22), transparent 28%),
-    linear-gradient(180deg, var(--app-bg-soft) 0%, var(--app-bg) 58%, #edf7fb 100%);
+  background: var(--app-bg);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -35,10 +31,7 @@ body {
   min-width: 320px;
   min-height: 100vh;
   overflow: hidden;
-  background:
-    linear-gradient(90deg, transparent, var(--app-line-soft), transparent),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.22) 0%, rgba(255, 255, 255, 0) 52%, rgba(77, 185, 230, 0.05) 100%),
-    var(--app-bg);
+  background: var(--app-bg);
 }
 
 button,

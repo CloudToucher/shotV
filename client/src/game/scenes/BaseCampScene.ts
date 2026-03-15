@@ -1,7 +1,8 @@
-﻿import { Container, Graphics, Text } from 'pixi.js'
+import { Container, Graphics, Text } from 'pixi.js'
 
 import type { GameStore } from '../../app/gameStore'
 import type { ArenaBounds, GameScene, InputSnapshot, ViewportSize } from '../core/contracts'
+import { WORLD_CAMERA_ZOOM } from '../core/camera'
 import { itemById } from '../data/items'
 import { weaponLoadout } from '../data/weapons'
 import type { WeaponType } from '../data/types'
@@ -10,11 +11,22 @@ import { autoArrangeInventory, canPlaceItemAtPosition, getInventoryCapacity, get
 import type { InventoryItemRecord } from '../inventory/types'
 import { palette } from '../theme/palette'
 import { drawFloatingInventoryItem, drawInventoryGrid, resolveInventoryCellAtPoint } from '../ui/inventorySurface'
-import { createFocusedViewBounds, createTextStyle, drawCornerFrame, drawFullScreenPanelFrame, drawMapOverlayPanel, drawMinimap, drawWorldMarkers, drawWorldObstacles, drawWorldSurface } from '../ui/surface'
+import { createFocusedViewBounds, createTextStyle, drawCornerFrame, drawFullScreenPanelFrame, drawMapOverlayPanel, drawMinimap, drawWorldActionProgress, drawWorldGateVisual, drawWorldInteractionHighlight, drawWorldMarkers, drawWorldObstacles, drawWorldSurface } from '../ui/surface'
 import { createBaseWorldLayout } from '../world/layout'
 import { getWorldRoute, worldRoutes } from '../world/routes'
 
 type BasePanelMode = 'overview' | 'locker' | 'workshop' | 'command' | 'launch'
+const LAUNCH_GATE_CHANNEL_SECONDS = 0.72
+const LAUNCH_GATE_OPEN_SECONDS = 0.34
+
+type LaunchGatePhase = 'charging' | 'opening'
+
+interface LaunchGateActionState {
+  phase: LaunchGatePhase
+  elapsed: number
+  duration: number
+  markerLabel: string
+}
 
 interface BaseStashPanelLayout {
   frame: {
@@ -64,6 +76,7 @@ export class BaseCampScene implements GameScene {
   private readonly terrain = new Graphics()
   private readonly obstacleLayer = new Graphics()
   private readonly markerLayer = new Graphics()
+  private readonly interactionOverlay = new Graphics()
   private readonly labels = new Container()
   private readonly minimap = new Graphics()
   private readonly minimapTitle = new Text({ text: '基地小地图', style: createTextStyle(12, palette.uiText, { fontWeight: '700' }) })
@@ -92,6 +105,7 @@ export class BaseCampScene implements GameScene {
   private pointerScreen = { x: 0, y: 0, hasPointer: false }
   private panelActionRegions: BasePanelActionRegion[] = []
   private selectedWorkshopSlot = 0
+  private pendingLaunchGateAction: LaunchGateActionState | null = null
 
   constructor(store: GameStore) {
     this.store = store
@@ -117,7 +131,7 @@ export class BaseCampScene implements GameScene {
       this.panelGridTitle,
       this.panelFooter,
     )
-    this.cameraRoot.addChild(this.terrain, this.obstacleLayer, this.markerLayer, this.labels, this.player.container)
+    this.cameraRoot.addChild(this.terrain, this.obstacleLayer, this.markerLayer, this.interactionOverlay, this.labels, this.player.container)
     this.player.setPosition(this.layout.playerSpawn.x, this.layout.playerSpawn.y)
     this.player.setWeaponStyle('machineGun')
     this.rebuildWorld()
@@ -125,6 +139,7 @@ export class BaseCampScene implements GameScene {
 
   resize(viewport: ViewportSize): void {
     this.viewport = viewport
+    this.cameraRoot.scale.set(WORLD_CAMERA_ZOOM)
     this.drawBackdrop()
     this.layoutUi()
   }
@@ -134,6 +149,10 @@ export class BaseCampScene implements GameScene {
       x: input.pointerX,
       y: input.pointerY,
       hasPointer: input.hasPointer,
+    }
+
+    if (this.pendingLaunchGateAction && (input.panelTogglePressed || input.mapTogglePressed)) {
+      this.cancelLaunchGateAction()
     }
 
     if (input.panelTogglePressed) {
@@ -191,16 +210,18 @@ export class BaseCampScene implements GameScene {
       this.player.setAimAngle(Math.atan2(pointerWorld.y - position.y, pointerWorld.x - position.x))
     }
 
-    if (this.panelOpen || this.mapOpen) {
+    if (this.panelOpen || this.mapOpen || this.pendingLaunchGateAction) {
       this.player.setMoveIntent(0, 0)
     } else {
       this.player.setMoveIntent(input.moveX, input.moveY)
     }
 
     this.player.update(deltaSeconds, this.worldBounds, elapsedSeconds, this.layout.obstacles)
+    this.tickLaunchGateAction(deltaSeconds)
     this.applyCamera()
     const focusedMarkerId = this.getFocusedMarkerId()
     drawWorldMarkers(this.markerLayer, this.layout.markers, elapsedSeconds, focusedMarkerId)
+    this.drawInteractionOverlay(elapsedSeconds)
     this.updateTitle()
     this.updateHint()
     this.updateMarkerLabels(focusedMarkerId)
@@ -220,6 +241,7 @@ export class BaseCampScene implements GameScene {
     drawWorldSurface(this.terrain, { bounds: this.worldBounds, gridSize: 80, mode: 'base' })
     drawWorldObstacles(this.obstacleLayer, this.layout.obstacles)
     drawWorldMarkers(this.markerLayer, this.layout.markers, 0)
+    this.interactionOverlay.clear()
     this.labels.removeChildren().forEach((child) => child.destroy())
     for (const marker of this.layout.markers) {
       const label = new Text({ text: marker.label, style: createTextStyle(12, palette.uiText, { fontWeight: '700', letterSpacing: 0.5 }) })
@@ -232,15 +254,20 @@ export class BaseCampScene implements GameScene {
 
   private applyCamera(): void {
     const position = this.player.getPosition()
-    const desiredX = this.viewport.width * 0.5 - position.x
-    const desiredY = this.viewport.height * 0.5 - position.y
-    const offsetX = clamp(desiredX, this.viewport.width - this.worldBounds.right, -this.worldBounds.left)
-    const offsetY = clamp(desiredY, this.viewport.height - this.worldBounds.bottom, -this.worldBounds.top)
+    const zoom = WORLD_CAMERA_ZOOM
+    const desiredX = this.viewport.width * 0.5 - position.x * zoom
+    const desiredY = this.viewport.height * 0.5 - position.y * zoom
+    const offsetX = clamp(desiredX, this.viewport.width - this.worldBounds.right * zoom, -this.worldBounds.left * zoom)
+    const offsetY = clamp(desiredY, this.viewport.height - this.worldBounds.bottom * zoom, -this.worldBounds.top * zoom)
+    this.cameraRoot.scale.set(zoom)
     this.cameraRoot.position.set(offsetX, offsetY)
   }
 
   private screenToWorld(screenX: number, screenY: number): { x: number; y: number } {
-    return { x: screenX - this.cameraRoot.position.x, y: screenY - this.cameraRoot.position.y }
+    return {
+      x: (screenX - this.cameraRoot.position.x) / WORLD_CAMERA_ZOOM,
+      y: (screenY - this.cameraRoot.position.y) / WORLD_CAMERA_ZOOM,
+    }
   }
 
   private updateTitle(): void {
@@ -254,10 +281,17 @@ export class BaseCampScene implements GameScene {
   private updateHint(): void {
     const marker = this.findNearbyMarker()
 
-    if (!marker) {
+    if (this.pendingLaunchGateAction) {
+      const progress = Math.min(1, this.pendingLaunchGateAction.elapsed / this.pendingLaunchGateAction.duration)
+      this.hint.text =
+        this.pendingLaunchGateAction.phase === 'charging'
+          ? `接近 ${this.pendingLaunchGateAction.markerLabel}：部署校验中 ${Math.round(progress * 100)}%`
+          : `接近 ${this.pendingLaunchGateAction.markerLabel}：闸门开启中 ${Math.round(progress * 100)}%`
+    } else if (!marker) {
       this.hint.text = '靠近站点后按 E 交互，或前往出击闸门打开部署确认。'
     } else if (marker.id === 'launch') {
-      this.hint.text = `接近 ${marker.label}：按 E 打开出击确认`
+      const closing = this.panelOpen && this.panelMode === 'launch'
+      this.hint.text = `接近 ${marker.label}：按 E ${closing ? '关闭部署确认' : '启动闸门校验'}`
     } else {
       const mode = resolveBasePanelMode(marker.id)
       const closing = this.panelOpen && mode !== null && this.panelMode === mode
@@ -432,13 +466,68 @@ export class BaseCampScene implements GameScene {
     this.overviewHint.text = '基地常态尽量保持场景完整可见。\n前往下方出击闸门后，才能进入当前选择的副本。'
   }
 
+  private drawInteractionOverlay(elapsedSeconds: number): void {
+    this.interactionOverlay.clear()
+    const marker = this.findNearbyMarker()
+
+    if (!marker) {
+      return
+    }
+
+    const mode = resolveBasePanelMode(marker.id)
+    const active = Boolean(mode && this.panelOpen && this.panelMode === mode)
+
+    drawWorldInteractionHighlight(this.interactionOverlay, {
+      centerX: marker.x,
+      centerY: marker.y,
+      radius: marker.id === 'launch' ? 34 : 28,
+      color: getMarkerEmphasisTint(marker.kind),
+      elapsedSeconds,
+      active: active || Boolean(this.pendingLaunchGateAction && marker.id === 'launch'),
+      emphasis: marker.id === 'launch' ? 1.1 : 0.95,
+    })
+
+    if (marker.id === 'launch') {
+      const openProgress = this.getLaunchGateOpenProgress()
+
+      drawWorldGateVisual(this.interactionOverlay, {
+        centerX: marker.x,
+        centerY: marker.y - 6,
+        width: 124,
+        height: 70,
+        color: palette.minimapMarker,
+        elapsedSeconds,
+        openness: openProgress,
+        active: Boolean(this.pendingLaunchGateAction) || (this.panelOpen && this.panelMode === 'launch'),
+      })
+
+      if (this.pendingLaunchGateAction) {
+        drawWorldActionProgress(this.interactionOverlay, {
+          centerX: marker.x,
+          centerY: marker.y + 10,
+          width: 132,
+          progress: this.pendingLaunchGateAction.elapsed / this.pendingLaunchGateAction.duration,
+          color: this.pendingLaunchGateAction.phase === 'charging' ? palette.minimapMarker : palette.frame,
+          elapsedSeconds,
+        })
+      }
+    }
+  }
+
   private syncSceneRuntime(): void {
     const marker = this.findNearbyMarker()
     const atLaunch = marker?.id === 'launch'
+    const pendingProgress = this.pendingLaunchGateAction ? Math.min(1, this.pendingLaunchGateAction.elapsed / this.pendingLaunchGateAction.duration) : 0
 
     this.store.updateSceneRuntime({
-      primaryActionReady: Boolean(atLaunch),
-      primaryActionHint: atLaunch ? '已到达出击闸门，按 E 打开出击确认。' : '前往出击闸门后才能出发。',
+      primaryActionReady: Boolean(atLaunch) && !this.pendingLaunchGateAction,
+      primaryActionHint: this.pendingLaunchGateAction
+        ? this.pendingLaunchGateAction.phase === 'charging'
+          ? `出击闸门校验中 ${Math.round(pendingProgress * 100)}%，离开范围会中断。`
+          : `出击闸门开启中 ${Math.round(pendingProgress * 100)}%，即将进入部署确认。`
+        : atLaunch
+          ? '已到达出击闸门，按 E 启动部署校验。'
+          : '前往出击闸门后才能出发。',
       nearbyMarkerId: marker?.id ?? null,
       nearbyMarkerLabel: marker?.label ?? null,
       nearbyMarkerKind: marker?.kind ?? null,
@@ -466,9 +555,12 @@ export class BaseCampScene implements GameScene {
   }
 
   private buildCameraBounds(): ArenaBounds {
-    const left = clamp(-this.cameraRoot.position.x, this.worldBounds.left, Math.max(this.worldBounds.left, this.worldBounds.right - this.viewport.width))
-    const top = clamp(-this.cameraRoot.position.y, this.worldBounds.top, Math.max(this.worldBounds.top, this.worldBounds.bottom - this.viewport.height))
-    return { left, top, right: Math.min(this.worldBounds.right, left + this.viewport.width), bottom: Math.min(this.worldBounds.bottom, top + this.viewport.height) }
+    const zoom = WORLD_CAMERA_ZOOM
+    const visibleWidth = this.viewport.width / zoom
+    const visibleHeight = this.viewport.height / zoom
+    const left = clamp(-this.cameraRoot.position.x / zoom, this.worldBounds.left, Math.max(this.worldBounds.left, this.worldBounds.right - visibleWidth))
+    const top = clamp(-this.cameraRoot.position.y / zoom, this.worldBounds.top, Math.max(this.worldBounds.top, this.worldBounds.bottom - visibleHeight))
+    return { left, top, right: Math.min(this.worldBounds.right, left + visibleWidth), bottom: Math.min(this.worldBounds.bottom, top + visibleHeight) }
   }
 
   private drawBackdrop(): void {
@@ -516,12 +608,78 @@ export class BaseCampScene implements GameScene {
       this.restoreHeldStashItem()
     }
 
+    if (mode === 'launch') {
+      if (this.pendingLaunchGateAction) {
+        return
+      }
+
+      this.pendingLaunchGateAction = {
+        phase: 'charging',
+        elapsed: 0,
+        duration: LAUNCH_GATE_CHANNEL_SECONDS,
+        markerLabel: marker?.label ?? '出击闸门',
+      }
+      this.panelOpen = false
+      this.mapOpen = false
+      return
+    }
+
     this.panelMode = mode
     if (mode === 'workshop') {
       this.selectedWorkshopSlot = clamp(this.selectedWorkshopSlot, 0, weaponLoadout.length - 1)
     }
     this.panelOpen = true
     this.mapOpen = false
+  }
+
+  private tickLaunchGateAction(deltaSeconds: number): void {
+    if (!this.pendingLaunchGateAction) {
+      return
+    }
+
+    const marker = this.findNearbyMarker()
+
+    if (!marker || marker.id !== 'launch' || this.mapOpen) {
+      this.cancelLaunchGateAction()
+      return
+    }
+
+    this.pendingLaunchGateAction.elapsed += deltaSeconds
+
+    if (this.pendingLaunchGateAction.elapsed < this.pendingLaunchGateAction.duration) {
+      return
+    }
+
+    if (this.pendingLaunchGateAction.phase === 'charging') {
+      this.pendingLaunchGateAction = {
+        ...this.pendingLaunchGateAction,
+        phase: 'opening',
+        elapsed: 0,
+        duration: LAUNCH_GATE_OPEN_SECONDS,
+      }
+      return
+    }
+
+    this.pendingLaunchGateAction = null
+    this.panelMode = 'launch'
+    this.panelOpen = true
+    this.mapOpen = false
+  }
+
+  private cancelLaunchGateAction(): void {
+    this.pendingLaunchGateAction = null
+  }
+
+  private getLaunchGateOpenProgress(): number {
+    if (this.pendingLaunchGateAction?.phase === 'opening') {
+      return Math.min(1, this.pendingLaunchGateAction.elapsed / this.pendingLaunchGateAction.duration)
+    }
+
+    if (this.panelOpen && this.panelMode === 'launch') {
+      return 1
+    }
+
+    return 0
   }
 
   private handleActionPanelPointerPressed(pointerX: number, pointerY: number): void {
@@ -741,20 +899,29 @@ export class BaseCampScene implements GameScene {
   }
 
   private drawPanelSection(bounds: { x: number; y: number; width: number; height: number }): void {
-    this.panel.roundRect(bounds.x, bounds.y, bounds.width, bounds.height, 14).fill({
+    const cut = 12
+    this.panel.poly([
+      bounds.x + cut, bounds.y,
+      bounds.x + bounds.width, bounds.y,
+      bounds.x + bounds.width, bounds.y + bounds.height - cut,
+      bounds.x + bounds.width - cut, bounds.y + bounds.height,
+      bounds.x, bounds.y + bounds.height,
+      bounds.x, bounds.y + cut
+    ]).fill({
       color: palette.uiActive,
-      alpha: 0.26,
+      alpha: 0.15,
     })
-    this.panel.roundRect(bounds.x, bounds.y, bounds.width, bounds.height, 14).stroke({
-      width: 1.1,
+    this.panel.poly([
+      bounds.x + cut, bounds.y,
+      bounds.x + bounds.width, bounds.y,
+      bounds.x + bounds.width, bounds.y + bounds.height - cut,
+      bounds.x + bounds.width - cut, bounds.y + bounds.height,
+      bounds.x, bounds.y + bounds.height,
+      bounds.x, bounds.y + cut
+    ]).stroke({
+      width: 1.5,
       color: palette.frame,
-      alpha: 0.24,
-      alignment: 0.5,
-    })
-    this.panel.roundRect(bounds.x + 2, bounds.y + 2, bounds.width - 4, bounds.height - 4, 12).stroke({
-      width: 1,
-      color: palette.frameSoft,
-      alpha: 0.12,
+      alpha: 0.25,
       alignment: 0.5,
     })
     this.panel.rect(bounds.x + 16, bounds.y + 42, bounds.width - 32, 1).fill({ color: palette.panelLine, alpha: 0.22 })
@@ -768,17 +935,32 @@ export class BaseCampScene implements GameScene {
     const fillAlpha = input.active ? 0.94 : input.hovered ? 0.86 : 0.76
     const strokeAlpha = input.active ? 0.78 : input.hovered ? 0.44 : 0.22
 
-    this.panel.roundRect(bounds.x, bounds.y, bounds.width, bounds.height, 16).fill({
+    const cut = 8
+    this.panel.poly([
+      bounds.x + cut, bounds.y,
+      bounds.x + bounds.width, bounds.y,
+      bounds.x + bounds.width, bounds.y + bounds.height - cut,
+      bounds.x + bounds.width - cut, bounds.y + bounds.height,
+      bounds.x, bounds.y + bounds.height,
+      bounds.x, bounds.y + cut
+    ]).fill({
       color: input.active ? palette.uiActive : palette.uiPanel,
       alpha: fillAlpha,
     })
-    this.panel.roundRect(bounds.x, bounds.y, bounds.width, bounds.height, 16).stroke({
-      width: 1.2,
+    this.panel.poly([
+      bounds.x + cut, bounds.y,
+      bounds.x + bounds.width, bounds.y,
+      bounds.x + bounds.width, bounds.y + bounds.height - cut,
+      bounds.x + bounds.width - cut, bounds.y + bounds.height,
+      bounds.x, bounds.y + bounds.height,
+      bounds.x, bounds.y + cut
+    ]).stroke({
+      width: 1.5,
       color: input.active ? input.accentColor : palette.frame,
       alpha: strokeAlpha,
       alignment: 0.5,
     })
-    this.panel.roundRect(bounds.x + 12, bounds.y + 14, 34, 3, 999).fill({
+    this.panel.rect(bounds.x + 12, bounds.y + 14, 34, 2).fill({
       color: input.accentColor,
       alpha: input.active ? 0.9 : input.hovered ? 0.58 : 0.34,
     })
@@ -829,9 +1011,25 @@ export class BaseCampScene implements GameScene {
     const x = Math.round((this.viewport.width - width) * 0.5)
     const y = Math.round(this.viewport.height - 82)
 
-    this.hintPanel.roundRect(x + 4, y + 6, width, height, 12).fill({ color: palette.obstacleShadow, alpha: 0.08 })
-    this.hintPanel.roundRect(x, y, width, height, 12).fill({ color: palette.uiPanel, alpha: 0.78 })
-    this.hintPanel.roundRect(x + 12, y + 10, width - 24, 16, 8).fill({ color: palette.arenaCore, alpha: 0.16 })
+    const cut = 8
+    this.hintPanel.poly([
+      x + cut, y,
+      x + width, y,
+      x + width, y + height - cut,
+      x + width - cut, y + height,
+      x, y + height,
+      x, y + cut
+    ]).fill({ color: palette.uiPanel, alpha: 0.85 })
+    
+    this.hintPanel.poly([
+      x + cut, y,
+      x + width, y,
+      x + width, y + height - cut,
+      x + width - cut, y + height,
+      x, y + height,
+      x, y + cut
+    ]).stroke({ width: 1.5, color: palette.frame, alpha: 0.5, alignment: 0.5 })
+    
     this.hintPanel.rect(x + 16, y + 19, 12, 2).fill({ color: palette.panelWarm, alpha: 0.82 })
   }
 
@@ -1211,5 +1409,3 @@ function assignWeaponToLoadoutSlot(weaponIds: readonly WeaponType[], slotIndex: 
   next[existingIndex] = previousWeapon
   return next
 }
-
-

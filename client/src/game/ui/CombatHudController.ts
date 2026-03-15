@@ -190,22 +190,50 @@ export class CombatHudController {
     this.bossText.text = snapshot.boss ? `区域主核 ${snapshot.boss.label} · 阶段 ${snapshot.boss.phase}` : ''
 
     drawHudPanel(this.hudGraphics, healthX, panelY, healthWidth, 86, 0.16 + healthPulse * 0.06)
-    this.hudGraphics.roundRect(infoX + 8, infoY + 10, infoWidth - 16, 58, 14).fill({
+    this.hudGraphics.poly([
+      infoX + 8 + 8, infoY + 10,
+      infoX + 8 + infoWidth - 16, infoY + 10,
+      infoX + 8 + infoWidth - 16, infoY + 10 + 58 - 8,
+      infoX + 8 + infoWidth - 16 - 8, infoY + 10 + 58,
+      infoX + 8, infoY + 10 + 58,
+      infoX + 8, infoY + 10 + 8
+    ]).fill({
       color: palette.uiPanel,
-      alpha: 0.34 + this.infoHudPulse * 0.08,
-    })
-    this.hudGraphics.roundRect(infoX + 14, infoY + 14, infoWidth - 28, 12, 6).fill({
+      alpha: 0.4 + this.infoHudPulse * 0.1,
+    }).stroke({ width: 1, color: palette.frame, alpha: 0.2 })
+    
+    this.hudGraphics.rect(infoX + 14, infoY + 14, infoWidth - 28, 2).fill({
       color: palette.arenaCore,
-      alpha: 0.14,
+      alpha: 0.3,
     })
 
-    this.hudGraphics
-      .roundRect(healthX + 22, panelY + 52, healthWidth - 44, 12, 999)
-      .fill({ color: palette.uiText, alpha: 0.12 })
-      .roundRect(healthX + 22, panelY + 52, (healthWidth - 44) * playerHealthRatio, 12, 999)
-      .fill({ color: playerHealthRatio > 0.3 ? palette.dash : palette.danger, alpha: 0.94 })
-      .roundRect(healthX + 22, panelY + 52, (healthWidth - 44) * Math.min(1, playerHealthRatio + healthPulse * 0.08), 12, 999)
-      .fill({ color: palette.arenaCore, alpha: 0.12 + healthPulse * 0.18 })
+    // Segmented health bar
+    const segments = 10
+    const segmentWidth = (healthWidth - 44 - (segments - 1) * 4) / segments
+    for (let i = 0; i < segments; i++) {
+      const segX = healthX + 22 + i * (segmentWidth + 4)
+      const segRatio = (i + 1) / segments
+      const isActive = playerHealthRatio >= segRatio - (1 / segments) / 2
+      
+      this.hudGraphics.poly([
+        segX + 4, panelY + 52,
+        segX + segmentWidth, panelY + 52,
+        segX + segmentWidth - 4, panelY + 62,
+        segX, panelY + 62
+      ]).fill({ 
+        color: isActive ? (playerHealthRatio > 0.3 ? palette.dash : palette.danger) : palette.uiText, 
+        alpha: isActive ? 0.9 + healthPulse * 0.1 : 0.15 
+      })
+      
+      if (isActive && healthPulse > 0) {
+        this.hudGraphics.poly([
+          segX + 4, panelY + 52,
+          segX + segmentWidth, panelY + 52,
+          segX + segmentWidth - 4, panelY + 62,
+          segX, panelY + 62
+        ]).stroke({ width: 1, color: palette.arenaCore, alpha: healthPulse * 0.5 })
+      }
+    }
 
     this.hudGraphics.rect(healthX + 22, panelY + 34, 64, 3).fill({ color: palette.panelWarm, alpha: 0.42 })
     this.hudGraphics.rect(infoX + 20, infoY + 34, 58, 3).fill({ color: palette.panelLine, alpha: 0.4 })
@@ -224,11 +252,18 @@ export class CombatHudController {
       label.alpha = available ? 0.98 : 0.68
       label.position.set(slotX + 14, quickSlotY + 12)
 
+      const cut = 6
       this.hudGraphics
-        .roundRect(slotX, quickSlotY, quickSlotWidth, 28, 12)
-        .fill({ color: available ? palette.uiActive : palette.uiPanel, alpha: 0.96 })
-        .roundRect(slotX, quickSlotY, quickSlotWidth, 28, 12)
-        .stroke({ width: 1.2, color: available ? palette.frame : palette.frameSoft, alpha: available ? 0.72 : 0.28, alignment: 0.5 })
+        .poly([
+          slotX + cut, quickSlotY,
+          slotX + quickSlotWidth, quickSlotY,
+          slotX + quickSlotWidth, quickSlotY + 28 - cut,
+          slotX + quickSlotWidth - cut, quickSlotY + 28,
+          slotX, quickSlotY + 28,
+          slotX, quickSlotY + cut
+        ])
+        .fill({ color: available ? palette.uiActive : palette.uiPanel, alpha: 0.9 })
+        .stroke({ width: 1.2, color: available ? palette.frame : palette.frameSoft, alpha: available ? 0.8 : 0.3, alignment: 0.5 })
 
       slotX += quickSlotWidth + quickSlotGap
     }
@@ -239,19 +274,25 @@ export class CombatHudController {
       const active = weapon.id === snapshot.currentWeaponId
       const label = this.weaponLabels[index]
       const rise = active ? 6 + this.weaponHudPulse * 6 : 0
-      const alpha = active ? 0.18 + this.weaponHudPulse * 0.14 : 0.06
-
       label.tint = active ? palette.uiText : palette.uiMuted
       label.alpha = active ? 1 : 0.78
       label.position.set(weaponX + 18, beltY + 15 - rise)
 
+      const wCut = 8
+      const wH = 46 + rise
+      const wY = beltY - rise
+      
       this.hudGraphics
-        .roundRect(weaponX, beltY - rise, 136, 46 + rise, 16)
-        .fill({ color: active ? palette.frame : palette.panelLine, alpha })
-        .roundRect(weaponX, beltY - rise, 136, 46 + rise, 16)
-        .fill({ color: active ? palette.uiActive : palette.uiPanel, alpha: 0.92 })
-        .roundRect(weaponX, beltY - rise, 136, 46 + rise, 16)
-        .stroke({ width: 1.4, color: active ? palette.frame : palette.frameSoft, alpha: active ? 0.86 : 0.34, alignment: 0.5 })
+        .poly([
+          weaponX + wCut, wY,
+          weaponX + 136, wY,
+          weaponX + 136, wY + wH - wCut,
+          weaponX + 136 - wCut, wY + wH,
+          weaponX, wY + wH,
+          weaponX, wY + wCut
+        ])
+        .fill({ color: active ? palette.uiActive : palette.uiPanel, alpha: 0.9 })
+        .stroke({ width: 1.5, color: active ? palette.frame : palette.frameSoft, alpha: active ? 0.9 : 0.3, alignment: 0.5 })
 
       this.hudGraphics.rect(weaponX + 16, beltY + 9 - rise, 30, 2).fill({ color: active ? palette.accent : palette.frameSoft, alpha: active ? 0.54 : 0.18 })
       weaponX += 148
@@ -266,10 +307,16 @@ export class CombatHudController {
       this.bossText.alpha = 1
       drawHudPanel(this.hudGraphics, bossX, bossY, bossWidth, 48, 0.12)
       this.hudGraphics
-        .roundRect(bossX + 18, bossY + 28, bossWidth - 36, 8, 999)
-        .fill({ color: palette.uiText, alpha: 0.12 })
-        .roundRect(bossX + 18, bossY + 28, (bossWidth - 36) * ratio, 8, 999)
+        .rect(bossX + 18, bossY + 28, bossWidth - 36, 4)
+        .fill({ color: palette.uiText, alpha: 0.15 })
+        .rect(bossX + 18, bossY + 28, (bossWidth - 36) * ratio, 4)
         .fill({ color: snapshot.boss.phase === 1 ? palette.warning : palette.danger, alpha: 0.96 })
+        
+      this.hudGraphics.poly([
+        bossX + 18 + (bossWidth - 36) * ratio, bossY + 24,
+        bossX + 18 + (bossWidth - 36) * ratio + 4, bossY + 28,
+        bossX + 18 + (bossWidth - 36) * ratio, bossY + 32
+      ]).fill({ color: palette.arenaCore, alpha: 0.9 })
     } else {
       this.bossText.alpha = 0
     }
@@ -287,17 +334,15 @@ export class CombatHudController {
       this.toastHint.alpha = 0
     }
 
-    if (snapshot.encounterState === 'down' || snapshot.encounterState === 'clear') {
-      const success = snapshot.encounterState === 'clear'
-
-      this.centerTitle.text = success ? '区域压制完成' : '战术链路中断'
-      this.centerHint.text = success ? '可选择继续推进，或直接撤离完成本局结算。' : '返回基地完成结算，然后重新部署。'
+    if (snapshot.encounterState === 'down') {
+      this.centerTitle.text = '战术链路中断'
+      this.centerHint.text = '返回基地完成结算，然后重新部署。'
       this.centerTitle.alpha = 1
       this.centerHint.alpha = 0.92
 
-      drawHudPanel(this.hudGraphics, this.viewport.width / 2 - 220, this.viewport.height / 2 - 84, 440, 164, success ? 0.14 : 0.18)
+      drawHudPanel(this.hudGraphics, this.viewport.width / 2 - 220, this.viewport.height / 2 - 84, 440, 164, 0.18)
       this.hudGraphics.rect(this.viewport.width / 2 - 180, this.viewport.height / 2 - 30, 360, 2).fill({
-        color: success ? palette.minimapMarker : palette.danger,
+        color: palette.danger,
         alpha: 0.24,
       })
     } else {
@@ -330,12 +375,27 @@ export class CombatHudController {
 }
 
 function drawHudPanel(graphics: Graphics, x: number, y: number, width: number, height: number, accentAlpha: number): void {
-  graphics.roundRect(x, y, width, height, 16).fill({ color: palette.uiPanel, alpha: 0.92 })
-  graphics.roundRect(x, y, width, height, 16).stroke({ width: 1.4, color: palette.frame, alpha: 0.18, alignment: 0.5 })
-  graphics.roundRect(x + 2, y + 2, width - 4, height - 4, 14).stroke({ width: 1, color: palette.frameSoft, alpha: 0.12, alignment: 0.5 })
-  graphics.rect(x, y, width, 16).fill({ color: palette.frame, alpha: accentAlpha })
-  graphics.rect(x + 16, y + 13, 30, 3).fill({ color: palette.panelWarm, alpha: 0.36 + accentAlpha * 0.84 })
-  drawCornerTicks(graphics, x + 12, y + 12, width - 24, height - 24)
+  const cut = 12
+  graphics.poly([
+    x + cut, y,
+    x + width, y,
+    x + width, y + height - cut,
+    x + width - cut, y + height,
+    x, y + height,
+    x, y + cut
+  ]).fill({ color: palette.uiPanel, alpha: 0.85 })
+  
+  graphics.poly([
+    x + cut, y,
+    x + width, y,
+    x + width, y + height - cut,
+    x + width - cut, y + height,
+    x, y + height,
+    x, y + cut
+  ]).stroke({ width: 1.5, color: palette.frame, alpha: 0.3, alignment: 0.5 })
+  
+  graphics.rect(x + 16, y + 8, 30, 2).fill({ color: palette.panelWarm, alpha: 0.5 + accentAlpha * 0.5 })
+  drawCornerTicks(graphics, x + 8, y + 8, width - 16, height - 16)
 }
 
 function drawCornerTicks(graphics: Graphics, x: number, y: number, width: number, height: number): void {

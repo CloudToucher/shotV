@@ -1,9 +1,8 @@
 import { Graphics } from 'pixi.js'
 
-import { itemById } from '../data/items'
 import type { InventoryItemRecord } from '../inventory/types'
 import { palette } from '../theme/palette'
-import { drawCornerFrame } from './surface'
+import { drawInventoryItemVisual } from './itemVisuals'
 
 export interface InventoryGridPoint {
   x: number
@@ -24,17 +23,26 @@ export function drawInventoryGrid(graphics: Graphics, options: InventoryGridDraw
   const width = columns * cellSize
   const height = rows * cellSize
 
-  graphics.roundRect(x, y, width, height, 12).fill({ color: palette.arenaCore, alpha: 0.84 })
-  graphics.roundRect(x, y, width, height, 12).stroke({ width: 1.1, color: palette.frame, alpha: 0.22, alignment: 0.5 })
-  graphics.roundRect(x + 2, y + 2, width - 4, height - 4, 10).stroke({ width: 1, color: palette.frameSoft, alpha: 0.14, alignment: 0.5 })
-  drawCornerFrame(graphics, x + 8, y + 8, width - 16, height - 16, 10, palette.frame, 0.14, 1)
+  graphics.rect(x, y, width, height).fill({ color: palette.uiPanel, alpha: 0.8 })
+  graphics.rect(x, y, width, height).stroke({ width: 1.5, color: palette.frame, alpha: 0.3, alignment: 0.5 })
+  
+  // Tactical corners
+  const cut = 8
+  graphics.moveTo(x, y + cut).lineTo(x, y).lineTo(x + cut, y)
+  graphics.moveTo(x + width - cut, y).lineTo(x + width, y).lineTo(x + width, y + cut)
+  graphics.moveTo(x + width, y + height - cut).lineTo(x + width, y + height).lineTo(x + width - cut, y + height)
+  graphics.moveTo(x + cut, y + height).lineTo(x, y + height).lineTo(x, y + height - cut)
+  graphics.stroke({ width: 2, color: palette.frame, alpha: 0.8 })
 
   for (let row = 0; row < rows; row += 1) {
     for (let column = 0; column < columns; column += 1) {
       const cellX = x + column * cellSize
       const cellY = y + row * cellSize
-      graphics.roundRect(cellX + 1.5, cellY + 1.5, cellSize - 3, cellSize - 3, 6).fill({ color: palette.uiActive, alpha: 0.32 })
-      graphics.roundRect(cellX + 1.5, cellY + 1.5, cellSize - 3, cellSize - 3, 6).stroke({ width: 1, color: palette.frameSoft, alpha: 0.12, alignment: 0.5 })
+      graphics.rect(cellX + 1, cellY + 1, cellSize - 2, cellSize - 2).fill({ color: palette.uiActive, alpha: 0.15 })
+      graphics.rect(cellX + 1, cellY + 1, cellSize - 2, cellSize - 2).stroke({ width: 1, color: palette.frameSoft, alpha: 0.1, alignment: 0.5 })
+      
+      // Center dot for grid
+      graphics.rect(cellX + cellSize / 2 - 1, cellY + cellSize / 2 - 1, 2, 2).fill({ color: palette.frameSoft, alpha: 0.2 })
     }
   }
 
@@ -94,31 +102,13 @@ function drawInventoryItem(
     strokeAlpha?: number
   },
 ): void {
-  const definition = itemById[options.item.itemId]
-  const itemWidth = options.item.width * options.cellSize
-  const itemHeight = options.item.height * options.cellSize
-  const tint = definition?.tint ?? palette.warning
-  const accent = definition?.accent ?? palette.accent
-  const alpha = options.alpha ?? 0.2
-  const accentAlpha = options.accentAlpha ?? 0.3
-  const strokeAlpha = options.strokeAlpha ?? 0.56
-
-  graphics.roundRect(options.x + 2, options.y + 2, itemWidth - 4, itemHeight - 4, 8).fill({ color: tint, alpha })
-  graphics.roundRect(options.x + 2, options.y + 2, itemWidth - 4, itemHeight - 4, 8).stroke({ width: 1.4, color: tint, alpha: strokeAlpha, alignment: 0.5 })
-  graphics.roundRect(options.x + 6, options.y + 6, itemWidth - 12, 8, 999).fill({ color: accent, alpha: accentAlpha })
-  drawCornerFrame(
-    graphics,
-    options.x + 6,
-    options.y + 6,
-    Math.max(10, itemWidth - 12),
-    Math.max(10, itemHeight - 12),
-    Math.max(6, Math.min(10, Math.min(itemWidth, itemHeight) * 0.18)),
-    tint,
-    strokeAlpha * 0.42,
-    1,
-  )
-
-  if (options.item.quantity > 1) {
-    graphics.roundRect(options.x + itemWidth - 20, options.y + itemHeight - 18, 14, 12, 6).fill({ color: accent, alpha: Math.min(0.88, accentAlpha + 0.3) })
-  }
+  drawInventoryItemVisual(graphics, {
+    item: options.item,
+    cellSize: options.cellSize,
+    x: options.x,
+    y: options.y,
+    alpha: options.alpha,
+    accentAlpha: options.accentAlpha,
+    strokeAlpha: options.strokeAlpha,
+  })
 }

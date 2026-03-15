@@ -1,10 +1,11 @@
-﻿import { Container, Graphics, Text } from 'pixi.js'
+import { Container, Graphics, Text } from 'pixi.js'
 
 import type { ActiveRunSnapshotInput, GameStore } from '../../app/gameStore'
 import { CombatEncounterManager, type CombatEncounterCallbacks, type CombatPlayerState } from '../combat/CombatEncounterManager'
 import { CombatPlayerController, type CombatPlayerControllerCallbacks } from '../combat/CombatPlayerController'
 import { GRENADE_DAMAGE, GRID_SIZE, MACHINE_GUN_DAMAGE, MACHINE_GUN_SPEED, PLAYER_MAX_HEALTH, SNIPER_DAMAGE, SNIPER_SPEED } from '../combat/constants'
 import type { BurstRing, EnemyActor, GrenadeProjectile, NeedleProjectile } from '../combat/types'
+import { WORLD_CAMERA_ZOOM } from '../core/camera'
 import type { ArenaBounds, GameScene, InputSnapshot, ViewportSize } from '../core/contracts'
 import { hostileByType } from '../data/hostiles'
 import { itemById } from '../data/items'
@@ -33,7 +34,8 @@ import { createInitialRunResourceLedger, type GroundLootDrop, type LootEntry, ty
 import { palette } from '../theme/palette'
 import { CombatHudController } from '../ui/CombatHudController'
 import { drawFloatingInventoryItem, drawInventoryGrid, resolveInventoryCellAtPoint } from '../ui/inventorySurface'
-import { createFocusedViewBounds, createTextStyle, drawCornerFrame, drawFullScreenPanelFrame, drawMapOverlayPanel, drawMinimap, drawWorldMarkers, drawWorldObstacles, drawWorldSurface } from '../ui/surface'
+import { drawGroundLootVisual } from '../ui/itemVisuals'
+import { createFocusedViewBounds, createTextStyle, drawCornerFrame, drawFullScreenPanelFrame, drawMapOverlayPanel, drawMinimap, drawWorldActionProgress, drawWorldExtractionSurge, drawWorldGateVisual, drawWorldInteractionHighlight, drawWorldMarkers, drawWorldObstacles, drawWorldSurface } from '../ui/surface'
 import { clipSegmentToWorld } from '../world/collision'
 import { createCombatWorldLayout, type WorldMapLayout } from '../world/layout'
 import { canExtractFromRunMap, createRunMapStateForRoute, getCurrentRunZone, getNextRunZone, getWorldRoute, isCurrentRunZoneCleared } from '../world/routes'
@@ -44,12 +46,27 @@ const PANEL_GROUND_COLUMNS = 6
 const PANEL_GROUND_ROWS = 3
 const PANEL_GROUND_RADIUS = 128
 const QUICK_SLOT_USE_LABELS = ['Z', 'X', 'C', 'V'] as const
+const EXIT_ADVANCE_CHANNEL_SECONDS = 0.8
+const EXIT_EXTRACT_CHANNEL_SECONDS = 1.1
+const EXIT_GATE_OPEN_SECONDS = 0.42
 const DROP_RELEASE_OFFSETS = [
   { x: -18, y: -8 },
   { x: 16, y: -4 },
   { x: -6, y: 18 },
   { x: 20, y: 14 },
 ]
+
+type ExitActionPhase = 'charging' | 'opening'
+
+interface ExitActionChannelState {
+  kind: 'advance' | 'extract'
+  phase: ExitActionPhase
+  markerId: string
+  markerLabel: string
+  elapsed: number
+  duration: number
+  nextZoneLabel: string | null
+}
 
 interface NearbyGroundLootPanelState {
   totalCount: number
@@ -101,6 +118,28 @@ interface CombatInventoryPanelLayout {
   }
 }
 
+interface Particle {
+  x: number
+  y: number
+  vx: number
+  vy: number
+  life: number
+  maxLife: number
+  color: number
+  size: number
+}
+
+interface DamageText {
+  text: Text
+  x: number
+  y: number
+  life: number
+  maxLife: number
+  vx: number
+  vy: number
+  scale: number
+}
+
 export class CombatSandboxScene implements GameScene {
   readonly container = new Container()
 
@@ -110,7 +149,11 @@ export class CombatSandboxScene implements GameScene {
   private readonly terrain = new Graphics()
   private readonly obstacleLayer = new Graphics()
   private readonly markerLayer = new Graphics()
+  private readonly interactionOverlay = new Graphics()
   private readonly markerLabelLayer = new Container()
+  private readonly damageTextLayer = new Container()
+  private readonly damageTexts: DamageText[] = []
+  private readonly particles: Particle[] = []
   private readonly world = new Container()
   private readonly enemyLayer = new Container()
   private readonly groundLootLayer = new Graphics()
@@ -171,6 +214,7 @@ export class CombatSandboxScene implements GameScene {
   private heldGroundRestoreDrop: GroundLootDrop | null = null
   private pointerScreen = { x: 0, y: 0, hasPointer: false }
   private storeUnsubscribe: (() => void) | null = null
+  private pendingExitAction: ExitActionChannelState | null = null
 
   constructor(store: GameStore) {
     this.store = store
@@ -198,7 +242,7 @@ export class CombatSandboxScene implements GameScene {
       this.panelGridTitle,
       this.panelFooter,
     )
-    this.cameraRoot.addChild(this.terrain, this.obstacleLayer, this.markerLayer, this.markerLabelLayer, this.world, this.groundLootLayer, this.aimGuide, this.effects, this.reticle)
+    this.cameraRoot.addChild(this.terrain, this.obstacleLayer, this.markerLayer, this.interactionOverlay, this.markerLabelLayer, this.world, this.groundLootLayer, this.aimGuide, this.effects, this.damageTextLayer, this.reticle)
     this.world.addChild(this.enemyLayer, this.player.container)
     this.storeUnsubscribe = this.store.subscribe((state, previousState) => {
       if (state.mode !== 'combat') {
@@ -215,12 +259,54 @@ export class CombatSandboxScene implements GameScene {
 
   resize(viewport: ViewportSize): void {
     this.viewport = viewport
+    this.cameraRoot.scale.set(WORLD_CAMERA_ZOOM)
     this.drawBackdrop()
     this.hud.setViewport(viewport)
     this.layoutUi()
     if (this.layout) {
       this.encounter.resize(this.layout.bounds, this.layout.obstacles, this.layout.enemySpawns, this.layout.bossSpawn)
       this.rebuildWorldVisuals()
+    }
+  }
+
+  private tickDamageTexts(deltaSeconds: number): void {
+    for (let i = this.damageTexts.length - 1; i >= 0; i--) {
+      const dt = this.damageTexts[i]
+      dt.life += deltaSeconds
+      if (dt.life >= dt.maxLife) {
+        this.damageTextLayer.removeChild(dt.text)
+        dt.text.destroy()
+        this.damageTexts.splice(i, 1)
+        continue
+      }
+      
+      dt.x += dt.vx * deltaSeconds
+      dt.y += dt.vy * deltaSeconds
+      dt.vy += 150 * deltaSeconds // gravity
+      
+      dt.text.position.set(dt.x, dt.y)
+      
+      const progress = dt.life / dt.maxLife
+      if (progress < 0.1) {
+        dt.text.scale.set(dt.scale * (progress / 0.1))
+      } else if (progress > 0.7) {
+        dt.text.alpha = 1 - (progress - 0.7) / 0.3
+      }
+    }
+  }
+
+  private tickParticles(deltaSeconds: number): void {
+    for (let i = this.particles.length - 1; i >= 0; i--) {
+      const p = this.particles[i]
+      p.life += deltaSeconds
+      if (p.life >= p.maxLife) {
+        this.particles.splice(i, 1)
+        continue
+      }
+      p.x += p.vx * deltaSeconds
+      p.y += p.vy * deltaSeconds
+      p.vx *= 0.88
+      p.vy *= 0.88
     }
   }
 
@@ -231,8 +317,13 @@ export class CombatSandboxScene implements GameScene {
       y: input.pointerY,
       hasPointer: input.hasPointer,
     }
+    if (this.pendingExitAction && (input.panelTogglePressed || input.mapTogglePressed)) {
+      this.cancelExitAction('已中断出口接管', '切换界面会终止当前读条')
+    }
     this.playerController.tick(deltaSeconds)
     this.hud.tick(deltaSeconds)
+    this.tickDamageTexts(deltaSeconds)
+    this.tickParticles(deltaSeconds)
     this.shakeTrauma = Math.max(0, this.shakeTrauma - deltaSeconds * 2.4)
 
     if (input.panelTogglePressed) {
@@ -262,6 +353,8 @@ export class CombatSandboxScene implements GameScene {
       return
     }
 
+    const activeRun = this.store.getState().save.session.activeRun
+
     if (this.panelOpen && !this.mapOpen) {
       if (input.pointerPressed) {
         this.handleInventoryPanelPointerPressed(input.pointerX, input.pointerY)
@@ -287,12 +380,15 @@ export class CombatSandboxScene implements GameScene {
     const encounterState = this.encounter.getEncounterState()
     const pointerWorld = input.hasPointer ? this.screenToWorld(input.pointerX, input.pointerY) : null
     const mappedInput = pointerWorld === null ? input : { ...input, pointerX: pointerWorld.x, pointerY: pointerWorld.y }
-    const sceneBlocked = this.panelOpen || this.mapOpen
+    const uiBlocked = this.panelOpen || this.mapOpen
+    const actionLocked = Boolean(this.pendingExitAction)
+    const sceneBlocked = uiBlocked || actionLocked
+    const canControlPlayer = !sceneBlocked && activeRun?.status === 'active' && encounterState !== 'down'
 
-    if (!sceneBlocked && encounterState === 'active') {
+    if (canControlPlayer) {
       this.runElapsedSeconds += deltaSeconds
       this.playerController.handleInput(mappedInput, this.player, this.worldBounds, this.playerCallbacks)
-      if (input.quickSlotUse) {
+      if (encounterState === 'active' && input.quickSlotUse) {
         this.tryUseQuickSlot(input.quickSlotUse)
       }
     } else {
@@ -300,17 +396,22 @@ export class CombatSandboxScene implements GameScene {
     }
 
     this.player.update(deltaSeconds, this.worldBounds, elapsedSeconds, this.layout.obstacles)
-    if (!sceneBlocked && input.interactPressed) {
-      this.tryPickupNearbyLoot()
+    if (activeRun?.status === 'active' && !sceneBlocked && input.interactPressed) {
+      if (!this.tryHandleWorldInteraction()) {
+        this.tryPickupNearbyLoot()
+      }
     }
-    if (!sceneBlocked) {
+    if (!uiBlocked) {
       this.encounter.update(deltaSeconds, elapsedSeconds, this.getPlayerState(), this.encounterCallbacks)
     }
+
+    this.tickExitAction(deltaSeconds)
 
     this.updateTransientEffects(deltaSeconds)
     this.applyCameraTransform()
     this.drawAimLayer(encounterState === 'active' && !this.panelOpen && pointerWorld !== null)
     this.drawEffects()
+    this.drawInteractionOverlay()
     this.drawGroundLoot()
     this.updateLocationLabel()
     this.updateInteractionPrompt()
@@ -405,6 +506,7 @@ export class CombatSandboxScene implements GameScene {
     },
     onEnemyHit: (enemy, amount, impactX, impactY) => {
       this.spawnRing(impactX, impactY, 6, 24, 0.12, palette.accentSoft, 2)
+      this.spawnDamageText(impactX, impactY - 20, amount, amount > 30)
       this.hud.pulseWeapon(Math.min(1, 0.28 + amount / 48))
       this.hud.pulseInfo(0.2)
       this.addShake(enemy.type === 'boss' ? 0.08 : 0.03)
@@ -412,19 +514,21 @@ export class CombatSandboxScene implements GameScene {
     onEnemyKilled: (enemy) => {
       this.runKills = this.encounter.getKillCount()
       this.applyKillRewards(enemy)
-      this.spawnRing(enemy.x, enemy.y, 14, enemy.type === 'boss' ? 74 : 42, 0.2, enemy.definition.colors.glow, 3)
+      this.spawnRing(enemy.x, enemy.y, 10, enemy.type === 'boss' ? 88 : 50, 0.22, enemy.definition.colors.glow, enemy.type === 'boss' ? 3.8 : 3)
+      this.spawnParticles(enemy.x, enemy.y, enemy.type === 'boss' ? 52 : 22, enemy.definition.colors.glow)
       this.hud.pulseInfo(enemy.type === 'boss' ? 1 : 0.55)
-      this.addShake(enemy.type === 'boss' ? 0.24 : 0.08)
+      this.addShake(enemy.type === 'boss' ? 0.27 : 0.1)
       this.flushRunSnapshot()
     },
     onPlayerDamaged: (amount, sourceX, sourceY) => {
+      this.spawnDamageText(this.player.getPosition().x, this.player.getPosition().y - 20, amount, false)
       this.applyPlayerDamage(amount, sourceX, sourceY)
     },
     onBossDefeated: (enemy) => {
       const baseMap = this.getLiveRunMap()
       const nextZone = getNextRunZone(baseMap)
       this.spawnRing(enemy.x, enemy.y, 24, 144, 0.42, palette.accent, 4)
-      this.hud.showToast(nextZone ? '区域已压制' : '路线已完成', nextZone ? '前往出口后可推进下一区域' : '前往撤离出口后完成本次副本', 99)
+      this.hud.showToast(nextZone ? '区域已压制' : '路线已完成', nextZone ? '前往出口后可推进下一区域' : '前往撤离出口后完成本次副本', 1.35)
       this.hud.pulseInfo(1)
       this.addShake(0.4)
       this.store.markCurrentZoneCleared(this.buildRunSnapshot())
@@ -494,6 +598,9 @@ export class CombatSandboxScene implements GameScene {
       if (run.pendingOutcome === 'down') {
         this.encounter.markPlayerDown()
         this.hud.showToast('行动中止', '本局等待结算，返回基地查看结果', 99)
+      } else if (run.pendingOutcome === 'extracted') {
+        this.encounter.markEncounterClear()
+        this.hud.showToast('撤离完成', '请先确认结算结果，再返回基地', 99)
       } else {
         this.encounter.markEncounterClear()
         this.hud.showToast('路线完成', '本局等待结算，返回基地领取回收物资', 99)
@@ -503,7 +610,7 @@ export class CombatSandboxScene implements GameScene {
 
     if (currentZone?.status === 'cleared') {
       this.encounter.markEncounterClear()
-      this.hud.showToast('区域已压制', getNextRunZone(run.map) ? '前往出口后可继续推进到下一区域' : '终点区域已完成，前往撤离出口完成副本', 99)
+      this.hud.showToast('区域已压制', getNextRunZone(run.map) ? '前往出口后可继续推进到下一区域' : '终点区域已完成，前往撤离出口完成副本', 1.35)
       return
     }
 
@@ -562,6 +669,8 @@ export class CombatSandboxScene implements GameScene {
     this.burstRings.length = 0
     this.shakeTrauma = 0
     this.cameraRoot.position.set(0, 0)
+    this.cameraRoot.scale.set(WORLD_CAMERA_ZOOM)
+    this.cameraRoot.skew.set(0, 0)
     this.syncTimer = RUN_SYNC_INTERVAL_SECONDS
     this.runElapsedSeconds = 0
     this.runKills = 0
@@ -576,6 +685,7 @@ export class CombatSandboxScene implements GameScene {
     this.dashesUsed = 0
     this.damageTaken = 0
     this.pendingOutcome = null
+    this.pendingExitAction = null
     this.clearHeldInventoryState()
   }
 
@@ -617,47 +727,82 @@ export class CombatSandboxScene implements GameScene {
     const nearestDrop = this.findNearbyGroundLoot()
 
     for (const drop of this.groundLoot) {
-      const definition = itemById[drop.item.itemId]
-      const tint = definition?.tint ?? palette.warning
-      const accent = definition?.accent ?? palette.accent
-      const pulse = (Math.sin(this.visualTime * 4.2 + drop.x * 0.01) + 1) * 0.5
-      const width = 18 + drop.item.width * 7
-      const height = 12 + drop.item.height * 7
-      const x = drop.x - width * 0.5
-      const y = drop.y - height * 0.5 - 10
-      const highlighted = nearestDrop?.id === drop.id
-      const frameWidth = width + (highlighted ? 12 : 8)
-      const frameHeight = height + (highlighted ? 18 : 12)
-      const frameX = drop.x - frameWidth * 0.5
-      const frameY = y - (highlighted ? 8 : 4)
-
-      this.groundLootLayer.circle(drop.x, drop.y + 6, 12 + pulse * 4 + (highlighted ? 4 : 0)).fill({
-        color: tint,
-        alpha: highlighted ? 0.1 : 0.05,
+      drawGroundLootVisual(this.groundLootLayer, {
+        item: drop.item,
+        centerX: drop.x,
+        centerY: drop.y,
+        elapsedSeconds: this.visualTime,
+        highlighted: nearestDrop?.id === drop.id,
       })
-      this.groundLootLayer.circle(drop.x, drop.y, 16 + pulse * 7 + (highlighted ? 6 : 0)).stroke({
-        width: highlighted ? 1.5 : 1.2,
-        color: tint,
-        alpha: highlighted ? 0.34 : 0.16,
-        alignment: 0.5,
+    }
+  }
+
+  private drawInteractionOverlay(): void {
+    this.interactionOverlay.clear()
+
+    if (!this.layout || this.mapOpen) {
+      return
+    }
+
+    const nearestDrop = this.findNearbyGroundLoot()
+
+    if (nearestDrop) {
+      return
+    }
+
+    const nearestMarker = this.findNearbyMarker()
+    const activeRun = this.store.getState().save.session.activeRun
+
+    if (!nearestMarker) {
+      return
+    }
+
+    const canAdvance = Boolean(activeRun && activeRun.status === 'active' && isCurrentRunZoneCleared(activeRun.map) && getNextRunZone(activeRun.map))
+    const canExtract = Boolean(activeRun && activeRun.status === 'active' && canExtractFromRunMap(activeRun.map))
+    const exitReady = nearestMarker.id === 'exit' && (canAdvance || canExtract)
+    const showAdvanceGate = nearestMarker.id === 'exit' && (this.pendingExitAction ? this.pendingExitAction.kind === 'advance' : canAdvance)
+    const markerColor =
+      nearestMarker.id === 'exit'
+        ? exitReady
+          ? palette.minimapMarker
+          : palette.warning
+        : getMarkerEmphasisTint(nearestMarker.kind)
+
+    drawWorldInteractionHighlight(this.interactionOverlay, {
+      centerX: nearestMarker.x,
+      centerY: nearestMarker.y,
+      radius: nearestMarker.id === 'exit' ? 34 : nearestMarker.kind === 'objective' ? 30 : 26,
+      color: markerColor,
+      elapsedSeconds: this.visualTime,
+      active: exitReady || nearestMarker.kind === 'objective' || Boolean(this.pendingExitAction && nearestMarker.id === this.pendingExitAction.markerId),
+      emphasis: nearestMarker.id === 'exit' ? 1.12 : 0.95,
+    })
+
+    if (nearestMarker.id === 'exit' && showAdvanceGate) {
+      drawWorldGateVisual(this.interactionOverlay, {
+        centerX: nearestMarker.x,
+        centerY: nearestMarker.y - 8,
+        width: 132,
+        height: 76,
+        color: markerColor,
+        elapsedSeconds: this.visualTime,
+        openness: this.getExitGateOpenProgress(exitReady),
+        active: exitReady || Boolean(this.pendingExitAction),
       })
-      this.groundLootLayer.roundRect(x, y, width, height, 6).fill({ color: palette.uiPanel, alpha: highlighted ? 0.92 : 0.82 })
-      this.groundLootLayer.roundRect(x, y, width, height, 6).stroke({ width: 1.2, color: tint, alpha: highlighted ? 0.72 : 0.36, alignment: 0.5 })
-      this.groundLootLayer.rect(x + 4, y + 4, width - 8, 4).fill({ color: accent, alpha: highlighted ? 0.52 : 0.3 })
-      drawCornerFrame(this.groundLootLayer, frameX, frameY, frameWidth, frameHeight, 8, tint, highlighted ? 0.36 : 0.16, highlighted ? 1.2 : 1)
 
-      if (highlighted) {
-        this.groundLootLayer.moveTo(frameX - 10, drop.y - 10)
-        this.groundLootLayer.lineTo(frameX - 2, drop.y - 2)
-        this.groundLootLayer.lineTo(frameX - 10, drop.y + 6)
-        this.groundLootLayer.moveTo(frameX + frameWidth + 10, drop.y - 10)
-        this.groundLootLayer.lineTo(frameX + frameWidth + 2, drop.y - 2)
-        this.groundLootLayer.lineTo(frameX + frameWidth + 10, drop.y + 6)
-        this.groundLootLayer.stroke({ width: 1.4, color: tint, alpha: 0.42, cap: 'round', join: 'round' })
-      }
-
-      if (drop.item.quantity > 1) {
-        this.groundLootLayer.roundRect(x + width - 22, y + height - 16, 16, 12, 6).fill({ color: accent, alpha: 0.94 })
+      if (this.pendingExitAction && nearestMarker.id === this.pendingExitAction.markerId) {
+        drawWorldActionProgress(this.interactionOverlay, {
+          centerX: nearestMarker.x,
+          centerY: nearestMarker.y + 10,
+          width: 140,
+          progress: this.pendingExitAction.elapsed / this.pendingExitAction.duration,
+          color: this.pendingExitAction.phase === 'charging'
+            ? this.pendingExitAction.kind === 'extract'
+              ? palette.minimapMarker
+              : palette.frame
+            : palette.accent,
+          elapsedSeconds: this.visualTime,
+        })
       }
     }
   }
@@ -884,10 +1029,163 @@ export class CombatSandboxScene implements GameScene {
     this.flushRunSnapshot()
   }
 
+  private tryHandleWorldInteraction(): boolean {
+    const activeRun = this.store.getState().save.session.activeRun
+
+    if (!activeRun || activeRun.status !== 'active' || this.pendingExitAction) {
+      return false
+    }
+
+    const nearestMarker = this.findNearbyMarker()
+
+    if (!nearestMarker) {
+      return false
+    }
+
+    if (nearestMarker.id === 'exit') {
+      const nextZone = getNextRunZone(activeRun.map)
+      const canAdvance = isCurrentRunZoneCleared(activeRun.map) && Boolean(nextZone)
+      const canExtract = canExtractFromRunMap(activeRun.map)
+
+      if (canAdvance) {
+        this.startExitAction('advance', nearestMarker.label, nextZone?.label ?? null)
+        return true
+      }
+
+      if (canExtract) {
+        this.startExitAction('extract', nearestMarker.label, null)
+        return true
+      }
+
+      this.hud.showToast(nearestMarker.label, '出口尚未联通，先完成当前区域压制', 0.9)
+      return true
+    }
+
+    if (nearestMarker.kind === 'objective') {
+      this.hud.showToast(
+        nearestMarker.label,
+        isCurrentRunZoneCleared(activeRun.map) ? '区域已压制，转向真正出口执行推进或撤离' : '这里只负责战斗目标，推进或撤离必须去真正出口',
+        0.95,
+      )
+      return true
+    }
+
+    return false
+  }
+
+  private startExitAction(kind: 'advance' | 'extract', markerLabel: string, nextZoneLabel: string | null): void {
+    this.pendingExitAction = {
+      kind,
+      phase: 'charging',
+      markerId: 'exit',
+      markerLabel,
+      elapsed: 0,
+      duration: kind === 'extract' ? EXIT_EXTRACT_CHANNEL_SECONDS : EXIT_ADVANCE_CHANNEL_SECONDS,
+      nextZoneLabel,
+    }
+    this.hud.showToast(
+      kind === 'extract' ? '撤离通道校验中' : '区域通道接管中',
+      kind === 'extract' ? '保持在出口范围内，读条完成后进入结算确认' : `保持在出口范围内，读条完成后推进到 ${nextZoneLabel ?? '下一区域'}`,
+      0.9,
+    )
+  }
+
+  private tickExitAction(deltaSeconds: number): void {
+    if (!this.pendingExitAction) {
+      return
+    }
+
+    const activeRun = this.store.getState().save.session.activeRun
+    const nearestMarker = this.findNearbyMarker()
+
+    if (!activeRun || activeRun.status !== 'active') {
+      this.pendingExitAction = null
+      return
+    }
+
+    if (!nearestMarker || nearestMarker.id !== this.pendingExitAction.markerId || this.mapOpen || this.panelOpen) {
+      this.cancelExitAction('出口接管已取消', '离开出口范围或切换界面会中断当前读条')
+      return
+    }
+
+    if (this.pendingExitAction.kind === 'advance') {
+      const nextZone = getNextRunZone(activeRun.map)
+      if (!isCurrentRunZoneCleared(activeRun.map) || !nextZone) {
+        this.cancelExitAction('区域通道已失效', '当前已不满足推进条件')
+        return
+      }
+      this.pendingExitAction.nextZoneLabel = nextZone.label
+    } else if (!canExtractFromRunMap(activeRun.map)) {
+      this.cancelExitAction('撤离通道已失效', '当前区域暂时不允许撤离')
+      return
+    }
+
+    this.pendingExitAction.elapsed += deltaSeconds
+
+    if (this.pendingExitAction.elapsed < this.pendingExitAction.duration) {
+      return
+    }
+
+    if (this.pendingExitAction.phase === 'charging') {
+      if (this.pendingExitAction.kind === 'extract') {
+        this.pendingExitAction = null
+        this.hud.showToast('撤离完成', '请在结算画面确认结果后返回基地', 0.95)
+        this.store.markRunOutcome('extracted', this.buildRunSnapshot())
+        return
+      }
+
+      this.pendingExitAction = {
+        ...this.pendingExitAction,
+        phase: 'opening',
+        elapsed: 0,
+        duration: EXIT_GATE_OPEN_SECONDS,
+      }
+      this.hud.showToast(
+        this.pendingExitAction.kind === 'extract' ? '撤离门体开启中' : '区域门体开启中',
+        this.pendingExitAction.kind === 'extract' ? '保持当前位置，门体完全展开后离场' : '保持当前位置，门体完全展开后推进',
+        0.75,
+      )
+      return
+    }
+
+    const completed = { ...this.pendingExitAction }
+    this.pendingExitAction = null
+    const snapshot = this.buildRunSnapshot()
+    this.store.syncActiveRun(snapshot)
+
+    if (completed.kind === 'advance') {
+      this.hud.showToast('出口已接管', `正在推进到 ${completed.nextZoneLabel ?? '下一区域'}`, 0.95)
+      this.store.advanceActiveRunZone(true)
+      return
+    }
+  }
+
+  private cancelExitAction(title: string, detail: string): void {
+    if (!this.pendingExitAction) {
+      return
+    }
+
+    this.pendingExitAction = null
+    this.hud.showToast(title, detail, 0.85)
+  }
+
+  private getExitGateOpenProgress(exitReady: boolean): number {
+    if (this.pendingExitAction?.phase === 'opening') {
+      return Math.min(1, this.pendingExitAction.elapsed / this.pendingExitAction.duration)
+    }
+
+    if (this.pendingExitAction?.phase === 'charging') {
+      return 0.18
+    }
+
+    return exitReady ? 0.26 : 0
+  }
+
   private finalizeRun(outcome: Extract<RunResolutionOutcome, 'boss-clear' | 'down'>): void {
     if (this.pendingOutcome) {
       return
     }
+    this.pendingExitAction = null
     this.pendingOutcome = outcome
     this.store.markRunOutcome(outcome, this.buildRunSnapshot())
   }
@@ -955,6 +1253,55 @@ export class CombatSandboxScene implements GameScene {
     }
   }
 
+  private spawnParticles(x: number, y: number, count: number, color: number): void {
+    for (let i = 0; i < count; i++) {
+      const angle = Math.random() * Math.PI * 2
+      const speed = 140 + Math.random() * 240
+      this.particles.push({
+        x,
+        y,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed,
+        life: 0,
+        maxLife: 0.22 + Math.random() * 0.18,
+        color,
+        size: 2 + Math.random() * 3,
+      })
+    }
+  }
+
+  private spawnDamageText(x: number, y: number, amount: number, isCrit: boolean = false): void {
+    const text = new Text({
+      text: Math.ceil(amount).toString(),
+      style: createTextStyle(isCrit ? 24 : 16, isCrit ? palette.warning : palette.uiText, {
+        fontWeight: '900',
+        letterSpacing: 1,
+        dropShadow: {
+          alpha: 0.8,
+          angle: Math.PI / 4,
+          blur: 2,
+          color: 0x000000,
+          distance: 2
+        }
+      })
+    })
+    text.anchor.set(0.5)
+    text.position.set(x, y)
+    
+    this.damageTextLayer.addChild(text)
+    
+    this.damageTexts.push({
+      text,
+      x,
+      y,
+      life: 0,
+      maxLife: isCrit ? 0.8 : 0.6,
+      vx: (Math.random() - 0.5) * 60,
+      vy: -100 - Math.random() * 50,
+      scale: isCrit ? 1.5 : 1
+    })
+  }
+
   private spawnRing(x: number, y: number, startRadius: number, endRadius: number, duration: number, color: number, width: number): void {
     this.burstRings.push({ x, y, age: 0, duration, startRadius, endRadius, color, width })
   }
@@ -965,24 +1312,41 @@ export class CombatSandboxScene implements GameScene {
 
   private applyCameraTransform(): void {
     const playerPosition = this.player.getPosition()
-    const desiredX = this.viewport.width * 0.5 - playerPosition.x
-    const desiredY = this.viewport.height * 0.5 - playerPosition.y
-    const clampedX = clamp(desiredX, this.viewport.width - this.worldBounds.right, -this.worldBounds.left)
-    const clampedY = clamp(desiredY, this.viewport.height - this.worldBounds.bottom, -this.worldBounds.top)
+    const extractionProgress = this.getExtractionSurgeProgress()
+    const { zoomX, zoomY } = this.getCameraZoom(extractionProgress)
+    const desiredX = this.viewport.width * 0.5 - playerPosition.x * zoomX
+    const desiredY = this.viewport.height * 0.5 - playerPosition.y * zoomY
+    const clampedX = clamp(desiredX, this.viewport.width - this.worldBounds.right * zoomX, -this.worldBounds.left * zoomX)
+    const clampedY = clamp(desiredY, this.viewport.height - this.worldBounds.bottom * zoomY, -this.worldBounds.top * zoomY)
     const shakePower = this.shakeTrauma * this.shakeTrauma * 14
     const shakeX = this.shakeTrauma > 0.0001 ? Math.sin(this.visualTime * 48) * shakePower * 0.72 : 0
     const shakeY = this.shakeTrauma > 0.0001 ? Math.cos(this.visualTime * 44) * shakePower : 0
-    this.cameraRoot.position.set(clampedX + shakeX, clampedY + shakeY)
+    const extractionWarp = extractionProgress * extractionProgress
+    const warpX = extractionProgress > 0 ? Math.sin(this.visualTime * 20 + extractionProgress * 8) * extractionWarp * 8 : 0
+    const warpY = extractionProgress > 0 ? Math.cos(this.visualTime * 18 + extractionProgress * 6) * extractionWarp * 6 : 0
+    this.cameraRoot.position.set(clampedX + shakeX + warpX, clampedY + shakeY + warpY)
+    this.cameraRoot.scale.set(zoomX, zoomY)
+    this.cameraRoot.skew.set(
+      Math.sin(this.visualTime * 16) * extractionProgress * 0.018,
+      Math.cos(this.visualTime * 14) * extractionProgress * 0.01,
+    )
   }
 
   private buildCameraBounds(): ArenaBounds {
-    const left = clamp(-this.cameraRoot.position.x, this.worldBounds.left, Math.max(this.worldBounds.left, this.worldBounds.right - this.viewport.width))
-    const top = clamp(-this.cameraRoot.position.y, this.worldBounds.top, Math.max(this.worldBounds.top, this.worldBounds.bottom - this.viewport.height))
-    return { left, top, right: Math.min(this.worldBounds.right, left + this.viewport.width), bottom: Math.min(this.worldBounds.bottom, top + this.viewport.height) }
+    const { zoomX, zoomY } = this.getCameraZoom()
+    const visibleWidth = this.viewport.width / zoomX
+    const visibleHeight = this.viewport.height / zoomY
+    const left = clamp(-this.cameraRoot.position.x / zoomX, this.worldBounds.left, Math.max(this.worldBounds.left, this.worldBounds.right - visibleWidth))
+    const top = clamp(-this.cameraRoot.position.y / zoomY, this.worldBounds.top, Math.max(this.worldBounds.top, this.worldBounds.bottom - visibleHeight))
+    return { left, top, right: Math.min(this.worldBounds.right, left + visibleWidth), bottom: Math.min(this.worldBounds.bottom, top + visibleHeight) }
   }
 
   private screenToWorld(screenX: number, screenY: number): { x: number; y: number } {
-    return { x: screenX - this.cameraRoot.position.x, y: screenY - this.cameraRoot.position.y }
+    const { zoomX, zoomY } = this.getCameraZoom()
+    return {
+      x: (screenX - this.cameraRoot.position.x) / zoomX,
+      y: (screenY - this.cameraRoot.position.y) / zoomY,
+    }
   }
 
   private drawAimLayer(showReticle: boolean): void {
@@ -1010,6 +1374,17 @@ export class CombatSandboxScene implements GameScene {
 
   private drawEffects(): void {
     this.effects.clear()
+    
+    for (const p of this.particles) {
+      const alpha = 1 - (p.life / p.maxLife)
+      this.effects.poly([
+        p.x, p.y - p.size,
+        p.x + p.size, p.y,
+        p.x, p.y + p.size,
+        p.x - p.size, p.y
+      ]).fill({ color: p.color, alpha })
+    }
+
     for (const ring of this.burstRings) {
       const progress = ring.age / ring.duration
       this.effects.circle(ring.x, ring.y, lerp(ring.startRadius, ring.endRadius, progress)).stroke({ width: Math.max(1, ring.width - progress * 2), color: ring.color, alpha: 1 - progress, alignment: 0.5 })
@@ -1037,6 +1412,23 @@ export class CombatSandboxScene implements GameScene {
     }
 
     if (this.layout) {
+      const extractionProgress = this.getExtractionSurgeProgress()
+
+      if (extractionProgress > 0) {
+        const exitMarker = this.layout.markers.find((marker) => marker.id === 'exit')
+
+        if (exitMarker) {
+          drawWorldExtractionSurge(this.effects, {
+            centerX: exitMarker.x,
+            centerY: exitMarker.y,
+            progress: extractionProgress,
+            elapsedSeconds: this.visualTime,
+            radius: Math.max(this.viewport.width, this.viewport.height) * 0.92,
+            color: palette.minimapMarker,
+          })
+        }
+      }
+
       drawWorldMarkers(this.markerLayer, this.layout.markers, this.visualTime, this.getFocusedMarkerId())
     }
   }
@@ -1723,20 +2115,29 @@ export class CombatSandboxScene implements GameScene {
   }
 
   private drawPanelSection(bounds: { x: number; y: number; width: number; height: number }): void {
-    this.panel.roundRect(bounds.x, bounds.y, bounds.width, bounds.height, 14).fill({
+    const cut = 12
+    this.panel.poly([
+      bounds.x + cut, bounds.y,
+      bounds.x + bounds.width, bounds.y,
+      bounds.x + bounds.width, bounds.y + bounds.height - cut,
+      bounds.x + bounds.width - cut, bounds.y + bounds.height,
+      bounds.x, bounds.y + bounds.height,
+      bounds.x, bounds.y + cut
+    ]).fill({
       color: palette.uiActive,
-      alpha: 0.26,
+      alpha: 0.15,
     })
-    this.panel.roundRect(bounds.x, bounds.y, bounds.width, bounds.height, 14).stroke({
-      width: 1.1,
+    this.panel.poly([
+      bounds.x + cut, bounds.y,
+      bounds.x + bounds.width, bounds.y,
+      bounds.x + bounds.width, bounds.y + bounds.height - cut,
+      bounds.x + bounds.width - cut, bounds.y + bounds.height,
+      bounds.x, bounds.y + bounds.height,
+      bounds.x, bounds.y + cut
+    ]).stroke({
+      width: 1.5,
       color: palette.frame,
-      alpha: 0.24,
-      alignment: 0.5,
-    })
-    this.panel.roundRect(bounds.x + 2, bounds.y + 2, bounds.width - 4, bounds.height - 4, 12).stroke({
-      width: 1,
-      color: palette.frameSoft,
-      alpha: 0.12,
+      alpha: 0.25,
       alignment: 0.5,
     })
     this.panel.rect(bounds.x + 16, bounds.y + 42, bounds.width - 32, 1).fill({ color: palette.panelLine, alpha: 0.22 })
@@ -1759,11 +2160,26 @@ export class CombatSandboxScene implements GameScene {
       this.drawInteractionPromptPanel()
       return
     }
+    if (this.pendingExitAction) {
+      const progress = Math.min(1, this.pendingExitAction.elapsed / this.pendingExitAction.duration)
+      this.interactionText.text =
+        this.pendingExitAction.phase === 'charging'
+          ? this.pendingExitAction.kind === 'extract'
+            ? `接近 ${this.pendingExitAction.markerLabel}：撤离校验 ${Math.round(progress * 100)}%`
+            : `接近 ${this.pendingExitAction.markerLabel}：推进校验 ${Math.round(progress * 100)}%`
+          : this.pendingExitAction.kind === 'extract'
+            ? `接近 ${this.pendingExitAction.markerLabel}：撤离门体开启 ${Math.round(progress * 100)}%`
+            : `接近 ${this.pendingExitAction.markerLabel}：推进门体开启 ${Math.round(progress * 100)}%`
+      this.drawInteractionPromptPanel()
+      return
+    }
     const nearestDrop = this.findNearbyGroundLoot()
     const nearestMarker = this.findNearbyMarker()
     const activeRun = this.store.getState().save.session.activeRun
 
-    if (nearestDrop) {
+    if (activeRun?.status === 'awaiting-settlement') {
+      this.interactionText.text = '本局已结束：确认结算结果后返回基地'
+    } else if (nearestDrop) {
       const definition = itemById[nearestDrop.item.itemId]
       const canPlace = placeItemInGrid(this.runInventory.columns, this.runInventory.rows, this.runInventory.items, nearestDrop.item).placed
       this.interactionText.text = canPlace
@@ -1773,9 +2189,15 @@ export class CombatSandboxScene implements GameScene {
       this.interactionText.text = ''
     } else if (nearestMarker.id === 'exit') {
       const zoneCleared = isCurrentRunZoneCleared(activeRun.map)
+      const canAdvance = zoneCleared && Boolean(getNextRunZone(activeRun.map))
+      const canExtract = canExtractFromRunMap(activeRun.map)
 
-      if (zoneCleared || canExtractFromRunMap(activeRun.map)) {
-        this.interactionText.text = `接近 ${nearestMarker.label}：出口已联通，可在右上角推进或撤离`
+      if (canAdvance && canExtract) {
+        this.interactionText.text = `接近 ${nearestMarker.label}：按 E 推进，或在右上角立即撤离`
+      } else if (canAdvance) {
+        this.interactionText.text = `接近 ${nearestMarker.label}：按 E 推进到下一区域`
+      } else if (canExtract) {
+        this.interactionText.text = `接近 ${nearestMarker.label}：按 E 执行撤离`
       } else {
         this.interactionText.text = `接近 ${nearestMarker.label}：出口锁定中，先清理当前区域`
       }
@@ -1874,15 +2296,27 @@ export class CombatSandboxScene implements GameScene {
     const atExit = nearestMarker?.id === 'exit'
     const canExtract = activeRun.status === 'active' && canExtractFromRunMap(activeRun.map)
     const canAdvance = activeRun.status === 'active' && isCurrentRunZoneCleared(activeRun.map) && Boolean(getNextRunZone(activeRun.map))
-    const ready = activeRun.status === 'awaiting-settlement' ? true : atExit && (canExtract || canAdvance)
+    const pendingProgress = this.pendingExitAction ? Math.min(1, this.pendingExitAction.elapsed / this.pendingExitAction.duration) : 0
+    const ready = activeRun.status === 'awaiting-settlement' ? true : !this.pendingExitAction && atExit && (canExtract || canAdvance)
     let hint = ''
 
     if (activeRun.status === 'awaiting-settlement') {
-      hint = '本局已结束，可直接结算返回基地。'
+      hint = '本局已结束，确认结算后返回基地。'
+    } else if (this.pendingExitAction) {
+      hint =
+        this.pendingExitAction.phase === 'charging'
+          ? this.pendingExitAction.kind === 'extract'
+            ? `撤离校验中 ${Math.round(pendingProgress * 100)}%，切换界面会中断。`
+            : `区域推进校验中 ${Math.round(pendingProgress * 100)}%，切换界面会中断。`
+          : this.pendingExitAction.kind === 'extract'
+            ? `撤离门体开启中 ${Math.round(pendingProgress * 100)}%，即将离场。`
+            : `区域门体开启中 ${Math.round(pendingProgress * 100)}%，即将推进。`
+    } else if (ready && canAdvance && canExtract) {
+      hint = `已到达 ${nearestMarker?.label ?? '出口'}，按 E 推进下一区域，或在右上角立即撤离。`
     } else if (ready && canAdvance) {
-      hint = `已到达 ${nearestMarker?.label ?? '出口'}，可推进下一区域。`
+      hint = `已到达 ${nearestMarker?.label ?? '出口'}，按 E 推进下一区域。`
     } else if (ready && canExtract) {
-      hint = `已到达 ${nearestMarker?.label ?? '撤离出口'}，可执行撤离。`
+      hint = `已到达 ${nearestMarker?.label ?? '撤离出口'}，按 E 执行撤离。`
     } else if (canAdvance) {
       hint = '当前区域已清理，前往出口后才能推进。'
     } else if (canExtract) {
@@ -1960,9 +2394,25 @@ export class CombatSandboxScene implements GameScene {
     const x = Math.round((this.viewport.width - width) * 0.5)
     const y = Math.round(this.viewport.height - 78)
 
-    this.interactionPanel.roundRect(x + 4, y + 6, width, height, 12).fill({ color: palette.obstacleShadow, alpha: 0.08 })
-    this.interactionPanel.roundRect(x, y, width, height, 12).fill({ color: palette.uiPanel, alpha: 0.78 })
-    this.interactionPanel.roundRect(x + 12, y + 10, width - 24, 16, 8).fill({ color: palette.arenaCore, alpha: 0.16 })
+    const cut = 8
+    this.interactionPanel.poly([
+      x + cut, y,
+      x + width, y,
+      x + width, y + height - cut,
+      x + width - cut, y + height,
+      x, y + height,
+      x, y + cut
+    ]).fill({ color: palette.uiPanel, alpha: 0.85 })
+    
+    this.interactionPanel.poly([
+      x + cut, y,
+      x + width, y,
+      x + width, y + height - cut,
+      x + width - cut, y + height,
+      x, y + height,
+      x, y + cut
+    ]).stroke({ width: 1.5, color: palette.frame, alpha: 0.5, alignment: 0.5 })
+    
     this.interactionPanel.rect(x + 16, y + 19, 12, 2).fill({ color: palette.panelWarm, alpha: 0.82 })
   }
 
@@ -1988,6 +2438,23 @@ export class CombatSandboxScene implements GameScene {
     }
 
     return 'objective'
+  }
+
+  private getExtractionSurgeProgress(): number {
+    if (this.pendingExitAction?.kind !== 'extract') {
+      return 0
+    }
+
+    return clamp(this.pendingExitAction.elapsed / this.pendingExitAction.duration, 0, 1)
+  }
+
+  private getCameraZoom(extractionProgress = this.getExtractionSurgeProgress()): { zoomX: number; zoomY: number } {
+    const extractionWarp = extractionProgress * extractionProgress
+
+    return {
+      zoomX: WORLD_CAMERA_ZOOM * (1 + extractionWarp * 0.022),
+      zoomY: WORLD_CAMERA_ZOOM * (1 - extractionWarp * 0.014),
+    }
   }
 }
 

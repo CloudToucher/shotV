@@ -9,6 +9,7 @@ import type { InventoryItemRecord } from '../game/inventory/types'
 import {
   createInitialRunResourceLedger,
   createInitialRunState,
+  type ExtractionResult,
   type LootEntry,
   type RunResolutionOutcome,
   type RunState,
@@ -179,11 +180,11 @@ export class GameStore {
     })
   }
 
-  advanceActiveRunZone(): void {
+  advanceActiveRunZone(force = false): void {
     this.commit('combat', (save) => {
       const activeRun = save.session.activeRun
 
-      if (!activeRun || activeRun.status !== 'active' || !this.state.runtime.primaryActionReady) {
+      if (!activeRun || activeRun.status !== 'active' || (!force && !this.state.runtime.primaryActionReady)) {
         return save
       }
 
@@ -209,7 +210,7 @@ export class GameStore {
     })
   }
 
-  markRunOutcome(outcome: Extract<RunResolutionOutcome, 'boss-clear' | 'down'>, snapshot?: ActiveRunSnapshotInput): void {
+  markRunOutcome(outcome: RunResolutionOutcome, snapshot?: ActiveRunSnapshotInput): void {
     this.commit('combat', (save) => {
       const activeRun = save.session.activeRun
 
@@ -218,43 +219,21 @@ export class GameStore {
       }
 
       const mergedRun = mergeRunSnapshot(activeRun, snapshot)
-      const highestWave = Math.max(mergedRun.stats.highestWave, mergedRun.map.highestWave, mergedRun.map.currentWave)
+      const normalizedRun = finalizeRunForOutcome(mergedRun, outcome)
 
       return {
         ...save,
         updatedAt: new Date().toISOString(),
         session: {
           ...save.session,
-          activeRun: {
-            ...mergedRun,
-            status: 'awaiting-settlement',
-            pendingOutcome: outcome,
-            player: {
-              ...mergedRun.player,
-              health: outcome === 'down' ? 0 : mergedRun.player.health,
-            },
-            map: {
-              ...mergedRun.map,
-              hostilesRemaining: outcome === 'down' ? mergedRun.map.hostilesRemaining : 0,
-              boss: {
-                ...mergedRun.map.boss,
-                defeated: outcome === 'boss-clear' ? true : mergedRun.map.boss.defeated,
-                health: outcome === 'boss-clear' ? 0 : mergedRun.map.boss.health,
-              },
-            },
-            stats: {
-              ...mergedRun.stats,
-              highestWave,
-              bossDefeated: outcome === 'boss-clear' ? true : mergedRun.stats.bossDefeated,
-            },
-          },
+          activeRun: normalizedRun,
         },
-        world: mergeWorldStateWithRunMap(save.world, mergedRun.map),
+        world: mergeWorldStateWithRunMap(save.world, normalizedRun.map),
       }
     })
   }
 
-  resolveActiveRunToBase(outcome: RunResolutionOutcome = 'extracted'): void {
+  resolveActiveRunToBase(outcome: RunResolutionOutcome = 'extracted', force = false): void {
     this.commit('base', (save) => {
       const activeRun = save.session.activeRun
 
@@ -262,7 +241,7 @@ export class GameStore {
         return save
       }
 
-      if (activeRun.status === 'active' && (!canExtractFromRunMap(activeRun.map) || !this.state.runtime.primaryActionReady)) {
+      if (activeRun.status === 'active' && (!canExtractFromRunMap(activeRun.map) || (!force && !this.state.runtime.primaryActionReady))) {
         return save
       }
 
@@ -400,6 +379,16 @@ export class GameStore {
 
 export const gameStore = new GameStore()
 
+export function buildRunSettlementPreview(
+  inventory: SaveState['inventory'],
+  run: RunState,
+  outcome: RunResolutionOutcome,
+): ExtractionResult {
+  const normalizedRun = finalizeRunForOutcome(run, outcome)
+  const settlement = settleRunInventoryInBase(inventory, normalizedRun, outcome)
+  return buildExtractionResult(normalizedRun, outcome, new Date().toISOString(), settlement)
+}
+
 function mergeRunSnapshot(run: RunState, snapshot?: ActiveRunSnapshotInput): RunState {
   if (!snapshot) {
     return run
@@ -457,6 +446,7 @@ function finalizeRunForOutcome(run: RunState, outcome: RunResolutionOutcome): Ru
     map: {
       ...run.map,
       highestWave,
+      hostilesRemaining: outcome === 'down' ? run.map.hostilesRemaining : 0,
       boss: {
         ...run.map.boss,
         defeated: outcome === 'boss-clear' ? true : run.map.boss.defeated,
@@ -477,7 +467,7 @@ function buildExtractionResult(
   outcome: RunResolutionOutcome,
   resolvedAt: string,
   settlement: RunInventorySettlement,
-) {
+): ExtractionResult {
   const currentZone = getCurrentRunZone(run.map)
 
   return {
