@@ -1,8 +1,9 @@
 import { Container, Graphics } from 'pixi.js'
 
-import type { ArenaBounds } from '../core/contracts'
+import type { ArenaBounds, WorldObstacle } from '../core/contracts'
 import { palette } from '../theme/palette'
-import type { WeaponType } from '../weapons/weaponConfig'
+import type { WeaponType } from '../data/types'
+import { resolveCircleWorldMovement } from '../world/collision'
 
 const MAX_SPEED = 260
 const ACCELERATION = 7.25
@@ -162,6 +163,11 @@ export class PlayerAvatar {
     return true
   }
 
+  refreshDashCharge(): void {
+    this.dashCooldown = 0
+    this.dashPulse = Math.max(this.dashPulse, 0.75)
+  }
+
   triggerShot(intensity = 1): void {
     this.shotKick = Math.max(this.shotKick, intensity)
   }
@@ -183,7 +189,7 @@ export class PlayerAvatar {
     return this.aimAngle
   }
 
-  update(deltaSeconds: number, arena: ArenaBounds, elapsedSeconds: number): void {
+  update(deltaSeconds: number, arena: ArenaBounds, elapsedSeconds: number, obstacles: readonly WorldObstacle[] = []): void {
     this.dashCooldown = Math.max(0, this.dashCooldown - deltaSeconds)
     this.shotKick = Math.max(0, this.shotKick - deltaSeconds * 9)
     this.dashPulse = Math.max(0, this.dashPulse - deltaSeconds * 4.5)
@@ -204,17 +210,26 @@ export class PlayerAvatar {
       this.velocity.y += (desiredVelocityY - this.velocity.y) * blend
     }
 
-    this.position.x += this.velocity.x * deltaSeconds
-    this.position.y += this.velocity.y * deltaSeconds
+    const nextPosition = resolveCircleWorldMovement(
+      this.position,
+      this.position.x + this.velocity.x * deltaSeconds,
+      this.position.y + this.velocity.y * deltaSeconds,
+      PLAYER_RADIUS,
+      arena,
+      obstacles,
+    )
 
-    this.position.x = clamp(this.position.x, arena.left, arena.right)
-    this.position.y = clamp(this.position.y, arena.top, arena.bottom)
+    const previousX = this.position.x
+    const previousY = this.position.y
 
-    if ((this.position.x === arena.left && this.velocity.x < 0) || (this.position.x === arena.right && this.velocity.x > 0)) {
+    this.position.x = nextPosition.x
+    this.position.y = nextPosition.y
+
+    if (Math.abs(this.position.x - previousX) < 0.001 && this.velocity.x !== 0) {
       this.velocity.x = 0
     }
 
-    if ((this.position.y === arena.top && this.velocity.y < 0) || (this.position.y === arena.bottom && this.velocity.y > 0)) {
+    if (Math.abs(this.position.y - previousY) < 0.001 && this.velocity.y !== 0) {
       this.velocity.y = 0
     }
 

@@ -1,39 +1,10 @@
-import { palette } from './theme/palette'
-
-export type HostileType = 'melee' | 'ranged' | 'charger' | 'boss'
-
-export type HostileMode = 'advance' | 'aim' | 'windup' | 'charge' | 'recover'
-
-export interface HostileDefinition {
-  type: HostileType
-  label: string
-  radius: number
-  maxHealth: number
-  moveSpeed: number
-  contactDamage: number
-  contactInterval: number
-  attackCooldown: number
-  attackWindup?: number
-  attackRange?: number
-  preferredDistance?: number
-  projectileSpeed?: number
-  projectileRadius?: number
-  projectileDamage?: number
-  chargeTriggerDistance?: number
-  chargeSpeed?: number
-  chargeDuration?: number
-  recoverDuration?: number
-  colors: {
-    body: number
-    edge: number
-    glow: number
-  }
-}
+import { palette } from '../theme/palette'
+import type { HostileDefinition, HostileType } from './types'
 
 export const hostileByType: Record<HostileType, HostileDefinition> = {
   melee: {
     type: 'melee',
-    label: 'Pursuer',
+    label: '追猎体',
     radius: 18,
     maxHealth: 34,
     moveSpeed: 142,
@@ -48,7 +19,7 @@ export const hostileByType: Record<HostileType, HostileDefinition> = {
   },
   ranged: {
     type: 'ranged',
-    label: 'Marksman',
+    label: '射击体',
     radius: 17,
     maxHealth: 30,
     moveSpeed: 96,
@@ -69,7 +40,7 @@ export const hostileByType: Record<HostileType, HostileDefinition> = {
   },
   charger: {
     type: 'charger',
-    label: 'Breaker',
+    label: '冲锋体',
     radius: 20,
     maxHealth: 48,
     moveSpeed: 94,
@@ -89,7 +60,7 @@ export const hostileByType: Record<HostileType, HostileDefinition> = {
   },
   boss: {
     type: 'boss',
-    label: 'Aegis Prime',
+    label: '神盾主核',
     radius: 34,
     maxHealth: 520,
     moveSpeed: 82,

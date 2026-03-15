@@ -1,4 +1,4 @@
-import type { HostileType } from './hostileConfig'
+import type { HostileType } from './types'
 
 export interface SpawnOrder {
   type: HostileType
@@ -33,18 +33,18 @@ export function buildWaveOrders(wave: number): SpawnOrder[] {
 
 export function buildWaveHint(wave: number): string {
   if (wave >= 5) {
-    return 'Aegis Prime entering the arena'
+    return '区域主核正在接管战场'
   }
 
   if (wave < 2) {
-    return 'Pursuers entering the frame'
+    return '追猎体开始从外围压近'
   }
 
   if (wave < 3) {
-    return 'Marksmen added to the pressure line'
+    return '射击体加入火力线'
   }
 
-  return 'Chargers now test dash timing'
+  return '冲锋体开始压迫位移节奏'
 }
 
 function pushOrders(target: SpawnOrder[], count: number, type: HostileType): void {

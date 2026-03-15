@@ -1,6 +1,7 @@
 import { Container, Graphics } from 'pixi.js'
 
-import { hostileByType, type HostileDefinition, type HostileMode, type HostileType } from '../hostileConfig'
+import { hostileByType } from '../data/hostiles'
+import type { HostileDefinition, HostileMode, HostileType } from '../data/types'
 import { palette } from '../theme/palette'
 
 export class EnemyAvatar {
