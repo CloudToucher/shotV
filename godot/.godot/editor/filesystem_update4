@@ -1,1 +1,13 @@
-res://scenes/combat_scene.gd
+res://Scripts/Combat/CombatRenderer.cs
+res://Scripts/Combat/DamageTextManager.cs
+res://Scripts/Combat/PlayerAvatar.cs
+res://Scripts/Combat/VfxManager.cs
+res://Scripts/Core/GameManager.cs
+res://Scripts/Core/SaveManager.cs
+res://Scripts/Scenes/BaseCampScene.cs
+res://Scripts/Scenes/CombatScene.cs
+res://Scripts/Scenes/MainScene.cs
+res://Scripts/UI/HUD.cs
+res://Scripts/UI/Minimap.cs
+res://Scripts/UI/ViewportOverlay.cs
+res://Scripts/UI/OverviewMapControl.cs
