@@ -9,7 +9,7 @@ public class GameSettingsState
 
 public class SaveState
 {
-    public int Version { get; set; } = 6;
+    public int Version { get; set; } = 7;
     public string CreatedAt { get; set; } = "";
     public string UpdatedAt { get; set; } = "";
     public BaseState Base { get; set; } = new();
@@ -35,7 +35,7 @@ public class SaveState
         var now = DateTime.UtcNow.ToString("o");
         return new SaveState
         {
-            Version = 6,
+            Version = 7,
             CreatedAt = now,
             UpdatedAt = now,
             Base = new BaseState(),

@@ -86,6 +86,7 @@ public static class RouteData
     };
 
     public static readonly Dictionary<string, WorldRouteDefinition> ById;
+    public static IReadOnlyList<WorldRouteDefinition> Maps => Routes;
 
     static RouteData()
     {
@@ -97,10 +98,20 @@ public static class RouteData
         return ById.TryGetValue(routeId, out var route) ? route : Routes[0];
     }
 
+    public static WorldRouteDefinition GetMap(string mapId)
+    {
+        return GetRoute(mapId);
+    }
+
     public static string GetNextRouteId(string currentRouteId)
     {
         int idx = System.Array.FindIndex(Routes, r => r.Id == currentRouteId);
         if (idx == -1) return Routes[0].Id;
         return Routes[(idx + 1) % Routes.Length].Id;
+    }
+
+    public static string GetNextMapId(string currentMapId)
+    {
+        return GetNextRouteId(currentMapId);
     }
 }

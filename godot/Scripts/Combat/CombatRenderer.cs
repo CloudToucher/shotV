@@ -126,6 +126,27 @@ public partial class CombatRenderer : Node2D
         var bounds = _layout!.Bounds;
         DrawRect(bounds, Palette.WorldFloor);
 
+        foreach (var region in _layout.Regions)
+        {
+            Color regionColor = region.Kind switch
+            {
+                WorldZoneKind.HighValue => Palette.Warning,
+                WorldZoneKind.HighRisk => Palette.Danger,
+                WorldZoneKind.Extraction => Palette.MinimapMarker,
+                _ => Palette.Frame,
+            };
+
+            DrawRect(region.Bounds, new Color(regionColor, 0.06f + region.ThreatLevel * 0.015f));
+            DrawRect(region.Bounds, new Color(regionColor, 0.22f), false, 2f);
+
+            for (float x = region.Bounds.Position.X - region.Bounds.Size.Y; x < region.Bounds.End.X; x += 42f)
+            {
+                var start = new Vector2(Mathf.Max(region.Bounds.Position.X, x), Mathf.Clamp(region.Bounds.Position.Y + (region.Bounds.Position.X - x), region.Bounds.Position.Y, region.Bounds.End.Y));
+                var end = new Vector2(Mathf.Min(region.Bounds.End.X, x + region.Bounds.Size.Y), Mathf.Clamp(region.Bounds.End.Y + (region.Bounds.Position.X - x), region.Bounds.Position.Y, region.Bounds.End.Y));
+                DrawLine(start, end, new Color(regionColor, 0.05f), 1f);
+            }
+        }
+
         float majorStep = CombatConstants.GridSize * 4f;
         var gridColor = new Color(Palette.WorldLineStrong, 0.24f);
         for (float x = bounds.Position.X + majorStep; x < bounds.End.X; x += majorStep)
@@ -263,7 +284,7 @@ public partial class CombatRenderer : Node2D
         foreach (var enemy in _encounter!.Enemies)
         {
             var colors = enemy.Definition.Colors;
-            float modePulse = GetModeStrength(enemy.Mode);
+            float modePulse = GetModeStrength(enemy.Mode) + (enemy.Alerted ? 0.18f : 0f);
             float sway = Mathf.Sin(elapsed * 4.4f + enemy.Id * 0.71f) * 0.035f;
             float shellScale = 1f + enemy.AttackPulse * 0.06f + modePulse * 0.04f;
             float glowScale = 1f + modePulse * 0.16f + enemy.DamageFlash * 0.12f;
@@ -280,6 +301,9 @@ public partial class CombatRenderer : Node2D
             DrawColoredPolygon(shell, new Color(colors.Body, 0.9f + enemy.LifeRatio * 0.1f));
             DrawPolyline(CloseShape(shell), new Color(colors.Edge, 0.72f + enemy.DamageFlash * 0.18f + modePulse * 0.12f), enemy.Type == HostileType.Boss ? 2.2f : 2f);
             DrawColoredPolygon(core, new Color(Palette.ArenaCore, 0.76f + enemy.AttackPulse * 0.14f + enemy.DamageFlash * 0.18f));
+
+            if (enemy.Alerted)
+                DrawArc(new Vector2(enemy.X, enemy.Y), enemy.Definition.Radius + 10f + enemy.AttackPulse * 6f, 0f, Mathf.Tau, 24, new Color(Palette.Warning, 0.26f), 1.2f);
 
             float aimDistance = enemy.Definition.Radius + 10f + modePulse * 6f;
             var aimCenter = new Vector2(enemy.X, enemy.Y) + new Vector2(Mathf.Cos(enemy.FacingAngle), Mathf.Sin(enemy.FacingAngle)) * aimDistance;
@@ -323,19 +347,28 @@ public partial class CombatRenderer : Node2D
         {
             var center = new Vector2(drop.X, drop.Y);
             float pulse = Mathf.Sin(elapsed * 3.2f + drop.X * 0.01f) * 0.5f + 0.5f;
+            float bob = Mathf.Sin(elapsed * 4.6f + drop.Y * 0.012f) * 2.4f;
             Color fill = drop.Source == LootSource.Boss ? Palette.Warning : Palette.MinimapMarker;
-            float size = 7f + pulse * 2f;
+            float nearby = _player != null && _player.PlayerPosition.DistanceTo(center) <= 72f ? 1f : 0f;
+            float size = 8f + pulse * 2.2f + nearby * 1.2f;
+            var drawCenter = center + new Vector2(0f, bob);
             var diamond = new[]
             {
-                center + new Vector2(0f, -size),
-                center + new Vector2(size * 0.7f, 0f),
-                center + new Vector2(0f, size),
-                center + new Vector2(-size * 0.7f, 0f),
+                drawCenter + new Vector2(0f, -size),
+                drawCenter + new Vector2(size * 0.72f, 0f),
+                drawCenter + new Vector2(0f, size),
+                drawCenter + new Vector2(-size * 0.72f, 0f),
             };
 
-            DrawArc(center, 14f, 0f, Mathf.Tau, 18, new Color(fill, 0.2f + pulse * 0.18f), 1.5f);
-            DrawColoredPolygon(diamond, new Color(fill, 0.82f));
-            DrawCircle(center, 3f, new Color(Palette.BgInner, 0.9f));
+            DrawCircle(center + new Vector2(0f, 12f), 7f + pulse * 1.4f, new Color(Palette.WorldLineStrong, 0.14f));
+            DrawCircle(drawCenter, 16f + pulse * 3f + nearby * 3f, new Color(fill, 0.1f + pulse * 0.08f + nearby * 0.14f));
+            DrawArc(drawCenter, 14f + nearby * 4f, 0f, Mathf.Tau, 24, new Color(fill, 0.24f + pulse * 0.18f + nearby * 0.18f), 1.6f);
+            DrawColoredPolygon(diamond, new Color(fill, 0.88f));
+            DrawPolyline(CloseShape(diamond), new Color(Palette.Reticle, 0.34f + nearby * 0.16f), 1.4f);
+            DrawCircle(drawCenter, 3.4f, new Color(Palette.BgInner, 0.96f));
+
+            if (nearby > 0f)
+                DrawArc(drawCenter, 20f + pulse * 3f, 0f, Mathf.Tau, 28, new Color(Palette.Accent, 0.34f), 1.2f);
         }
     }
 

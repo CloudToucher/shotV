@@ -1,5 +1,6 @@
 using System;
 using System.Linq;
+using Godot;
 using ShotV.Core;
 using ShotV.Data;
 using ShotV.State;
@@ -15,17 +16,17 @@ public static class RouteManager
         {
             RouteId = route.Id,
             CurrentZoneId = route.Zones[0].Id,
-            LayoutSeed = MathUtil.BuildLayoutSeedFromText($"{route.Id}:{route.Zones[0].Id}:{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}:{Guid.NewGuid()}"),
-            Zones = route.Zones.Select((z, i) => new RunZoneState
+            LayoutSeed = MathUtil.BuildLayoutSeedFromText($"{route.Id}:{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}:{Guid.NewGuid()}"),
+            Zones = route.Zones.Select(zone => new RunZoneState
             {
-                Id = z.Id,
-                Label = z.Label,
-                Kind = z.Kind,
-                Status = i == 0 ? RunZoneStatus.Active : RunZoneStatus.Locked,
-                ThreatLevel = z.ThreatLevel,
-                RewardMultiplier = z.RewardMultiplier,
-                AllowsExtraction = z.AllowsExtraction,
-                Description = z.Description,
+                Id = zone.Id,
+                Label = zone.Label,
+                Kind = zone.Kind,
+                Status = RunZoneStatus.Active,
+                ThreatLevel = zone.ThreatLevel,
+                RewardMultiplier = zone.RewardMultiplier,
+                AllowsExtraction = zone.AllowsExtraction,
+                Description = zone.Description,
             }).ToList(),
             CurrentWave = 0,
             HighestWave = 0,
@@ -36,63 +37,53 @@ public static class RouteManager
 
     public static RunZoneState? GetCurrentRunZone(RunMapState map)
     {
-        return map.Zones.FirstOrDefault(z => z.Id == map.CurrentZoneId);
+        return map.Zones.FirstOrDefault(zone => zone.Id == map.CurrentZoneId);
     }
 
     public static RunZoneState? GetNextRunZone(RunMapState map)
     {
-        int idx = map.Zones.FindIndex(z => z.Id == map.CurrentZoneId);
-        if (idx == -1 || idx + 1 >= map.Zones.Count) return null;
-        return map.Zones[idx + 1];
+        return null;
     }
 
     public static bool IsCurrentRunZoneCleared(RunMapState map)
     {
-        return GetCurrentRunZone(map)?.Status == RunZoneStatus.Cleared;
+        return false;
     }
 
     public static bool CanExtractFromRunMap(RunMapState map)
     {
-        var zone = GetCurrentRunZone(map);
-        return zone?.AllowsExtraction ?? false;
+        return map.Zones.Count > 0;
     }
 
     public static bool IsRunRouteComplete(RunMapState map)
     {
-        var current = GetCurrentRunZone(map);
-        return current != null && current.Status == RunZoneStatus.Cleared && GetNextRunZone(map) == null;
+        return false;
     }
 
     public static void MarkCurrentZoneCleared(RunMapState map)
     {
-        foreach (var zone in map.Zones)
-        {
-            if (zone.Id == map.CurrentZoneId)
-                zone.Status = RunZoneStatus.Cleared;
-        }
-        map.HostilesRemaining = 0;
-        map.Boss.Defeated = true;
-        map.Boss.Health = 0;
     }
 
     public static RunMapState? AdvanceRunMapZone(RunMapState map)
     {
-        var current = GetCurrentRunZone(map);
-        var next = GetNextRunZone(map);
-        if (current == null || current.Status != RunZoneStatus.Cleared || next == null) return null;
+        return null;
+    }
 
-        var newMap = map.Clone();
-        newMap.CurrentZoneId = next.Id;
-        newMap.LayoutSeed = MathUtil.BuildLayoutSeedFromText($"{map.RouteId}:{next.Id}:{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}:{Guid.NewGuid()}");
-        foreach (var zone in newMap.Zones)
-        {
-            if (zone.Id == current.Id) zone.Status = RunZoneStatus.Cleared;
-            else if (zone.Id == next.Id) zone.Status = RunZoneStatus.Active;
-        }
-        newMap.CurrentWave = 0;
-        newMap.HighestWave = 0;
-        newMap.HostilesRemaining = 0;
-        newMap.Boss = new RunBossState();
-        return newMap;
+    public static bool SetCurrentRunZone(RunMapState map, string zoneId)
+    {
+        if (map.Zones.All(zone => zone.Id != zoneId))
+            return false;
+
+        map.CurrentZoneId = zoneId;
+        return true;
+    }
+
+    public static RunZoneState? ResolveZoneAtPosition(RunMapState map, WorldMapLayout layout, Vector2 position)
+    {
+        var region = layout.GetRegionAtPosition(position);
+        if (region == null)
+            return GetCurrentRunZone(map);
+
+        return map.Zones.FirstOrDefault(zone => zone.Id == region.Id) ?? GetCurrentRunZone(map);
     }
 }

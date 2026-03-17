@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using Godot;
 using ShotV.Core;
 using ShotV.Data;
 
@@ -8,10 +9,27 @@ namespace ShotV.State;
 
 public class PlayerRunState
 {
+    public class PlayerWeaponState
+    {
+        public WeaponType WeaponId { get; set; }
+        public string AmmoTypeId { get; set; } = "";
+        public int Magazine { get; set; }
+        public int MagazineCapacity { get; set; }
+
+        public PlayerWeaponState Clone() => new()
+        {
+            WeaponId = WeaponId,
+            AmmoTypeId = AmmoTypeId,
+            Magazine = Magazine,
+            MagazineCapacity = MagazineCapacity,
+        };
+    }
+
     public float Health { get; set; } = 100f;
     public float MaxHealth { get; set; } = 100f;
     public WeaponType CurrentWeaponId { get; set; } = WeaponType.MachineGun;
     public List<WeaponType> LoadoutWeaponIds { get; set; } = new() { WeaponType.MachineGun, WeaponType.Grenade, WeaponType.Sniper };
+    public List<PlayerWeaponState> WeaponStates { get; set; } = new();
     public int ShotsFired { get; set; }
     public int GrenadesThrown { get; set; }
     public int DashesUsed { get; set; }
@@ -21,9 +39,48 @@ public class PlayerRunState
     {
         Health = Health, MaxHealth = MaxHealth, CurrentWeaponId = CurrentWeaponId,
         LoadoutWeaponIds = new List<WeaponType>(LoadoutWeaponIds),
+        WeaponStates = WeaponStates.Select(state => state.Clone()).ToList(),
         ShotsFired = ShotsFired, GrenadesThrown = GrenadesThrown,
         DashesUsed = DashesUsed, DamageTaken = DamageTaken,
     };
+
+    public void EnsureWeaponStates()
+    {
+        foreach (var weaponId in LoadoutWeaponIds)
+            EnsureWeaponState(weaponId);
+    }
+
+    public PlayerWeaponState EnsureWeaponState(WeaponType weaponId)
+    {
+        var existing = WeaponStates.FirstOrDefault(state => state.WeaponId == weaponId);
+        if (existing != null)
+        {
+            if (WeaponData.ById.TryGetValue(weaponId, out var definition))
+            {
+                existing.MagazineCapacity = definition.MagazineCapacity;
+                if (string.IsNullOrWhiteSpace(existing.AmmoTypeId)
+                    || !definition.AmmoTypes.Any(ammo => ammo.Id == existing.AmmoTypeId))
+                    existing.AmmoTypeId = WeaponData.GetDefaultAmmo(definition).Id;
+                existing.Magazine = Mathf.Clamp(existing.Magazine, 0, existing.MagazineCapacity);
+            }
+
+            return existing;
+        }
+
+        var fallback = WeaponData.ById.TryGetValue(weaponId, out var weapon)
+            ? weapon
+            : WeaponData.Loadout[0];
+        var ammo = WeaponData.GetDefaultAmmo(fallback);
+        var created = new PlayerWeaponState
+        {
+            WeaponId = weaponId,
+            AmmoTypeId = ammo.Id,
+            Magazine = fallback.MagazineCapacity,
+            MagazineCapacity = fallback.MagazineCapacity,
+        };
+        WeaponStates.Add(created);
+        return created;
+    }
 }
 
 public class GroundLootDrop
@@ -166,6 +223,21 @@ public class RunState
                 MaxHealth = CombatConstants.PlayerMaxHealth,
                 CurrentWeaponId = loadoutWeaponIds.Count > 0 ? loadoutWeaponIds[0] : WeaponType.MachineGun,
                 LoadoutWeaponIds = new List<WeaponType>(loadoutWeaponIds),
+                WeaponStates = loadoutWeaponIds
+                    .Where(WeaponData.ById.ContainsKey)
+                    .Select(weaponId =>
+                    {
+                        var definition = WeaponData.ById[weaponId];
+                        var ammo = WeaponData.GetDefaultAmmo(definition);
+                        return new PlayerRunState.PlayerWeaponState
+                        {
+                            WeaponId = weaponId,
+                            AmmoTypeId = ammo.Id,
+                            Magazine = definition.MagazineCapacity,
+                            MagazineCapacity = definition.MagazineCapacity,
+                        };
+                    })
+                    .ToList(),
             },
             Map = mapState.Clone(),
             Inventory = new GridInventoryState(),

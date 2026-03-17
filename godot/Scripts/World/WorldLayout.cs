@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Godot;
 using ShotV.Core;
+using ShotV.State;
 
 namespace ShotV.World;
 
@@ -25,6 +27,25 @@ public class WorldMarker
     public MarkerKind Kind { get; set; }
 }
 
+public class WorldRegion
+{
+    public string Id { get; set; } = "";
+    public string Label { get; set; } = "";
+    public WorldZoneKind Kind { get; set; }
+    public int ThreatLevel { get; set; }
+    public float RewardMultiplier { get; set; }
+    public string Description { get; set; } = "";
+    public Rect2 Bounds { get; set; }
+}
+
+public class WorldSpawnAnchor
+{
+    public string Id { get; set; } = "";
+    public string RegionId { get; set; } = "";
+    public Vector2 Position { get; set; }
+    public int ThreatLevel { get; set; }
+}
+
 public class WorldMapLayout
 {
     public string Id { get; set; } = "";
@@ -32,96 +53,154 @@ public class WorldMapLayout
     public Rect2 Bounds { get; set; }
     public Vector2 PlayerSpawn { get; set; }
     public Vector2 BossSpawn { get; set; }
+    public Vector2 ExtractionPoint { get; set; }
     public List<Vector2> EnemySpawns { get; set; } = new();
     public List<WorldObstacle> Obstacles { get; set; } = new();
     public List<WorldMarker> Markers { get; set; } = new();
+    public List<WorldRegion> Regions { get; set; } = new();
+    public List<WorldSpawnAnchor> SpawnAnchors { get; set; } = new();
+
+    public WorldRegion? GetRegionAtPosition(Vector2 point)
+    {
+        foreach (var region in Regions)
+        {
+            if (region.Bounds.HasPoint(point))
+                return region;
+        }
+
+        WorldRegion? closest = null;
+        float closestDistance = float.MaxValue;
+        foreach (var region in Regions)
+        {
+            float distance = region.Bounds.GetCenter().DistanceSquaredTo(point);
+            if (distance >= closestDistance)
+                continue;
+
+            closestDistance = distance;
+            closest = region;
+        }
+
+        return closest;
+    }
 }
 
 public struct CombatLayoutInput
 {
-    public string RouteId;
-    public string ZoneId;
-    public string ZoneLabel;
-    public int ThreatLevel;
-    public bool AllowsExtraction;
+    public string MapId;
+    public string MapLabel;
+    public List<RunZoneState> Regions;
     public uint Seed;
 }
 
 public static class WorldLayoutBuilder
 {
     private const float WorldMargin = 140f;
+    private static readonly Rect2[] RegionSlots =
+    {
+        new(0.08f, 0.60f, 0.25f, 0.24f),
+        new(0.36f, 0.48f, 0.26f, 0.28f),
+        new(0.67f, 0.18f, 0.24f, 0.30f),
+        new(0.16f, 0.16f, 0.24f, 0.24f),
+        new(0.66f, 0.62f, 0.24f, 0.20f),
+    };
 
     public static WorldMapLayout CreateCombatLayout(CombatLayoutInput input)
     {
-        float width = 2800f + input.ThreatLevel * 260f;
-        float height = 2200f + input.ThreatLevel * 220f;
+        int regionCount = Mathf.Max(1, input.Regions.Count);
+        int maxThreat = input.Regions.Count > 0 ? input.Regions.Max(region => region.ThreatLevel) : 1;
+        float width = 3400f + regionCount * 160f;
+        float height = 2500f + maxThreat * 120f;
         var bounds = new Rect2(0, 0, width, height);
         var playerSpawn = new Vector2(width * 0.5f, height - 220f);
-        var bossSpawn = new Vector2(width * 0.5f, 220f);
-        var exitPoint = new Vector2(width - 240f, height - 260f);
         var rng = new SeededRng(input.Seed);
+
+        var regions = BuildCombatRegions(bounds, input.Regions);
+        var extractionRegion = regions.FirstOrDefault(region => region.Kind == WorldZoneKind.Extraction) ?? regions[^1];
+        var extractionPoint = new Vector2(extractionRegion.Bounds.End.X - 140f, extractionRegion.Bounds.GetCenter().Y);
+        var bossSpawn = regions.OrderByDescending(region => region.ThreatLevel).First().Bounds.GetCenter();
 
         var obstacles = new List<WorldObstacle>();
         var safetyRects = new List<Rect2>
         {
-            new(playerSpawn.X - 180, playerSpawn.Y - 160, 360, 260),
-            new(bossSpawn.X - 220, bossSpawn.Y - 160, 440, 260),
-            new(exitPoint.X - 180, exitPoint.Y - 150, 360, 240),
-            new(width * 0.5f - 120, 0, 240, height),
-            new(playerSpawn.X - 120, playerSpawn.Y - 110, exitPoint.X - playerSpawn.X + 240, 220),
+            new(playerSpawn.X - 210, playerSpawn.Y - 170, 420, 280),
+            new(extractionPoint.X - 180, extractionPoint.Y - 180, 360, 360),
         };
+        safetyRects.AddRange(regions.Select(region => new Rect2(region.Bounds.GetCenter() - new Vector2(110f, 110f), new Vector2(220f, 220f))));
 
-        int obstacleTarget = 24 + input.ThreatLevel * 6;
+        int obstacleTarget = 34 + maxThreat * 10;
         int index = 0;
         int attempts = 0;
 
-        while (obstacles.Count < obstacleTarget && attempts < obstacleTarget * 24)
+        while (obstacles.Count < obstacleTarget && attempts < obstacleTarget * 28)
         {
             attempts++;
-            float ox = WorldMargin + rng.Next() * (width - WorldMargin * 2 - 240);
-            float oy = WorldMargin + rng.Next() * (height - WorldMargin * 2 - 220);
-            float ow = 90f + rng.Next() * (input.ThreatLevel >= 3 ? 210f : 170f);
-            float oh = 72f + rng.Next() * (input.ThreatLevel >= 2 ? 180f : 140f);
-            var kind = rng.Next() > 0.55f ? ObstacleKind.Wall : ObstacleKind.Cover;
-            var obstRect = new Rect2(ox, oy, ow, oh);
+            float ox = WorldMargin + rng.Next() * (width - WorldMargin * 2 - 260);
+            float oy = WorldMargin + rng.Next() * (height - WorldMargin * 2 - 240);
+            float ow = 90f + rng.Next() * 190f;
+            float oh = 72f + rng.Next() * 156f;
+            var kind = rng.Next() > 0.58f ? ObstacleKind.Wall : ObstacleKind.Cover;
+            var obstacleRect = new Rect2(ox, oy, ow, oh);
 
-            bool hitSafety = false;
-            foreach (var sr in safetyRects)
-            {
-                if (sr.Intersects(obstRect)) { hitSafety = true; break; }
-            }
-            if (hitSafety) continue;
+            if (safetyRects.Any(safe => safe.Intersects(obstacleRect)))
+                continue;
 
             bool hitExisting = false;
             foreach (var existing in obstacles)
             {
-                var expanded = new Rect2(existing.X - 48, existing.Y - 48, existing.Width + 96, existing.Height + 96);
-                if (expanded.Intersects(obstRect)) { hitExisting = true; break; }
+                var expanded = new Rect2(existing.X - 52f, existing.Y - 52f, existing.Width + 104f, existing.Height + 104f);
+                if (expanded.Intersects(obstacleRect))
+                {
+                    hitExisting = true;
+                    break;
+                }
             }
-            if (hitExisting) continue;
+            if (hitExisting)
+                continue;
 
-            obstacles.Add(new WorldObstacle { Id = $"combat-obstacle-{index}", X = ox, Y = oy, Width = ow, Height = oh, Kind = kind });
+            obstacles.Add(new WorldObstacle
+            {
+                Id = $"combat-obstacle-{index}",
+                X = ox,
+                Y = oy,
+                Width = ow,
+                Height = oh,
+                Kind = kind,
+            });
             index++;
         }
 
-        var enemySpawns = CreateCombatSpawnPoints(bounds, obstacles, playerSpawn);
+        var spawnAnchors = CreateSpawnAnchors(regions, obstacles, playerSpawn, extractionPoint, input.Seed ^ 0x51eb851f);
         var markers = new List<WorldMarker>
         {
-            new() { Id = "entry", X = playerSpawn.X, Y = playerSpawn.Y + 90, Label = "投送点", Kind = MarkerKind.Entry },
-            new() { Id = "objective", X = bossSpawn.X, Y = bossSpawn.Y, Label = $"{input.ZoneLabel}核心", Kind = MarkerKind.Objective },
-            new() { Id = "exit", X = exitPoint.X, Y = exitPoint.Y, Label = input.AllowsExtraction ? "撤离出口" : "区域出口", Kind = MarkerKind.Extraction },
+            new() { Id = "entry", X = playerSpawn.X, Y = playerSpawn.Y + 90f, Label = "投送点", Kind = MarkerKind.Entry },
+            new() { Id = "extraction", X = extractionPoint.X, Y = extractionPoint.Y, Label = "撤离出口", Kind = MarkerKind.Extraction },
         };
+
+        foreach (var region in regions)
+        {
+            markers.Add(new WorldMarker
+            {
+                Id = $"region-{region.Id}",
+                X = region.Bounds.GetCenter().X,
+                Y = region.Bounds.GetCenter().Y,
+                Label = region.Label,
+                Kind = region.Kind is WorldZoneKind.HighRisk or WorldZoneKind.HighValue ? MarkerKind.Objective : MarkerKind.Station,
+            });
+        }
 
         return new WorldMapLayout
         {
-            Id = $"{input.RouteId}:{input.ZoneId}",
+            Id = input.MapId,
             Seed = input.Seed,
             Bounds = bounds,
             PlayerSpawn = playerSpawn,
             BossSpawn = bossSpawn,
-            EnemySpawns = enemySpawns,
+            ExtractionPoint = extractionPoint,
+            EnemySpawns = spawnAnchors.Select(anchor => anchor.Position).ToList(),
             Obstacles = obstacles,
             Markers = markers,
+            Regions = regions,
+            SpawnAnchors = spawnAnchors,
         };
     }
 
@@ -161,41 +240,120 @@ public static class WorldLayoutBuilder
             Bounds = bounds,
             PlayerSpawn = playerSpawn,
             BossSpawn = new Vector2(1120, 280),
+            ExtractionPoint = new Vector2(1120, 1460),
             EnemySpawns = new List<Vector2>(),
             Obstacles = obstacles,
             Markers = markers,
         };
     }
 
-    private static List<Vector2> CreateCombatSpawnPoints(Rect2 bounds, List<WorldObstacle> obstacles, Vector2 playerSpawn)
+    private static List<WorldRegion> BuildCombatRegions(Rect2 bounds, List<RunZoneState> inputRegions)
     {
-        var candidates = new List<Vector2>
+        var regions = new List<WorldRegion>(inputRegions.Count);
+        var takenSlots = new HashSet<int>();
+
+        foreach (var region in inputRegions)
         {
-            new(bounds.Position.X + 160, bounds.Position.Y + 180),
-            new(bounds.End.X - 160, bounds.Position.Y + 180),
-            new(bounds.Position.X + 160, bounds.End.Y - 180),
-            new(bounds.End.X - 160, bounds.End.Y - 180),
-            new(bounds.Position.X + 120, bounds.End.Y * 0.55f),
-            new(bounds.End.X - 120, bounds.End.Y * 0.55f),
-            new(bounds.Position.X + bounds.Size.X * 0.28f, bounds.Position.Y + 120),
-            new(bounds.Position.X + bounds.Size.X * 0.72f, bounds.Position.Y + 120),
-            new(bounds.Position.X + bounds.Size.X * 0.22f, bounds.End.Y - 120),
-            new(bounds.Position.X + bounds.Size.X * 0.78f, bounds.End.Y - 120),
+            int slotIndex = PickRegionSlot(region.Kind, takenSlots);
+            takenSlots.Add(slotIndex);
+            var slot = RegionSlots[slotIndex];
+            var regionRect = new Rect2(
+                bounds.Position.X + bounds.Size.X * slot.Position.X,
+                bounds.Position.Y + bounds.Size.Y * slot.Position.Y,
+                bounds.Size.X * slot.Size.X,
+                bounds.Size.Y * slot.Size.Y);
+
+            regions.Add(new WorldRegion
+            {
+                Id = region.Id,
+                Label = region.Label,
+                Kind = region.Kind,
+                ThreatLevel = region.ThreatLevel,
+                RewardMultiplier = region.RewardMultiplier,
+                Description = region.Description,
+                Bounds = regionRect,
+            });
+        }
+
+        return regions;
+    }
+
+    private static int PickRegionSlot(WorldZoneKind kind, HashSet<int> takenSlots)
+    {
+        int[] preference = kind switch
+        {
+            WorldZoneKind.Extraction => new[] { 4, 2, 1, 0, 3 },
+            WorldZoneKind.HighValue => new[] { 2, 1, 3, 4, 0 },
+            WorldZoneKind.HighRisk => new[] { 1, 3, 2, 0, 4 },
+            _ => new[] { 0, 3, 1, 4, 2 },
         };
 
-        var result = new List<Vector2>();
-        foreach (var pt in candidates)
+        foreach (int slot in preference)
         {
-            if (pt.DistanceTo(playerSpawn) < 380f) continue;
-            bool insideObstacle = false;
-            foreach (var obs in obstacles)
-            {
-                var expanded = new Rect2(obs.X - 36, obs.Y - 36, obs.Width + 72, obs.Height + 72);
-                if (expanded.HasPoint(pt)) { insideObstacle = true; break; }
-            }
-            if (!insideObstacle) result.Add(pt);
+            if (!takenSlots.Contains(slot))
+                return slot;
         }
-        return result;
+
+        for (int slot = 0; slot < RegionSlots.Length; slot++)
+        {
+            if (!takenSlots.Contains(slot))
+                return slot;
+        }
+
+        return 0;
+    }
+
+    private static List<WorldSpawnAnchor> CreateSpawnAnchors(
+        List<WorldRegion> regions,
+        List<WorldObstacle> obstacles,
+        Vector2 playerSpawn,
+        Vector2 extractionPoint,
+        uint seed)
+    {
+        var rng = new SeededRng(seed);
+        var anchors = new List<WorldSpawnAnchor>();
+        int index = 0;
+
+        foreach (var region in regions)
+        {
+            int targetCount = 3 + Mathf.Clamp(region.ThreatLevel, 1, 4);
+            int attempts = 0;
+
+            while (anchors.Count(anchor => anchor.RegionId == region.Id) < targetCount && attempts < targetCount * 16)
+            {
+                attempts++;
+                float x = region.Bounds.Position.X + 96f + rng.Next() * Mathf.Max(120f, region.Bounds.Size.X - 192f);
+                float y = region.Bounds.Position.Y + 96f + rng.Next() * Mathf.Max(120f, region.Bounds.Size.Y - 192f);
+                var point = new Vector2(x, y);
+
+                if (point.DistanceTo(playerSpawn) < 360f || point.DistanceTo(extractionPoint) < 260f)
+                    continue;
+
+                bool blocked = false;
+                foreach (var obstacle in obstacles)
+                {
+                    var expanded = new Rect2(obstacle.X - 40f, obstacle.Y - 40f, obstacle.Width + 80f, obstacle.Height + 80f);
+                    if (expanded.HasPoint(point))
+                    {
+                        blocked = true;
+                        break;
+                    }
+                }
+                if (blocked)
+                    continue;
+
+                anchors.Add(new WorldSpawnAnchor
+                {
+                    Id = $"spawn-anchor-{index}",
+                    RegionId = region.Id,
+                    Position = point,
+                    ThreatLevel = region.ThreatLevel,
+                });
+                index++;
+            }
+        }
+
+        return anchors;
     }
 
     private static WorldObstacle MakeObstacle(string id, float x, float y, float w, float h, ObstacleKind kind)

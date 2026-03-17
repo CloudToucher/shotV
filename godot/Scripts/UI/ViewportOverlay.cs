@@ -101,7 +101,7 @@ public partial class ViewportOverlay : CanvasLayer
             18,
             18,
             16,
-            14));
+            0));
         _root.AddChild(_actionDock);
 
         var dockBody = new VBoxContainer();
@@ -179,7 +179,7 @@ public partial class ViewportOverlay : CanvasLayer
             24,
             24,
             22,
-            18));
+            0));
         modalHost.AddChild(_settlementModal);
 
         var modalBody = new VBoxContainer();
@@ -244,15 +244,12 @@ public partial class ViewportOverlay : CanvasLayer
 
         var state = store.State;
         var activeRun = state.Save.Session.ActiveRun;
-        var selectedRoute = RouteData.GetRoute(state.Save.World.SelectedRouteId);
-        var currentRoute = activeRun != null ? RouteData.GetRoute(activeRun.Map.RouteId) : selectedRoute;
+        var selectedRoute = RouteData.GetMap(state.Save.World.SelectedRouteId);
+        var currentRoute = activeRun != null ? RouteData.GetMap(activeRun.Map.RouteId) : selectedRoute;
         var currentZone = activeRun != null ? RouteManager.GetCurrentRunZone(activeRun.Map) : null;
-        var nextZone = activeRun != null ? RouteManager.GetNextRunZone(activeRun.Map) : null;
+        var deploymentReadiness = state.Mode == GameMode.Base ? store.EvaluateDeploymentReadiness() : null;
         bool showSettlement = state.Mode == GameMode.Combat && activeRun?.Status == RunStateStatus.AwaitingSettlement;
         bool showDock = !showSettlement && !state.Runtime.MapOverlayOpen && !state.Runtime.PanelOpen && (state.Mode == GameMode.Base || activeRun != null);
-        bool canAdvance = activeRun != null && activeRun.Status == RunStateStatus.Active
-            && RouteManager.IsCurrentRunZoneCleared(activeRun.Map)
-            && nextZone != null;
         bool canExtract = activeRun != null && activeRun.Status == RunStateStatus.Active
             && RouteManager.CanExtractFromRunMap(activeRun.Map);
 
@@ -265,15 +262,17 @@ public partial class ViewportOverlay : CanvasLayer
         {
             _dockKicker.Text = state.Mode == GameMode.Base ? "DEPLOY LINK" : "TACTICAL LINK";
             _dockTitle.Text = BuildHeadline(state.Mode, currentRoute, currentZone);
-            _dockCopy.Text = BuildSubline(state.Mode, selectedRoute, activeRun, nextZone);
-            _dockHint.Text = BuildSceneHint(state);
-            _primaryButton.Text = BuildPrimaryActionLabel(state.Mode, activeRun, canAdvance);
-            _primaryButton.Disabled = IsPrimaryActionDisabled(state, activeRun, canAdvance, canExtract);
-            _secondaryButton.Visible = activeRun != null
-                && activeRun.Status == RunStateStatus.Active
-                && canAdvance
-                && canExtract
-                && state.Runtime.PrimaryActionReady;
+            _dockCopy.Text = BuildSubline(state.Mode, selectedRoute, activeRun, currentZone);
+            _dockHint.Text = state.Mode == GameMode.Base && state.Runtime.PrimaryActionReady && deploymentReadiness != null
+                ? deploymentReadiness.Detail
+                : BuildSceneHint(state);
+            _primaryButton.Text = state.Mode == GameMode.Base && deploymentReadiness is { CanDeploy: false }
+                ? "部署未就绪"
+                : BuildPrimaryActionLabel(state.Mode, activeRun);
+            _primaryButton.Disabled = state.Mode == GameMode.Base
+                ? !state.Runtime.PrimaryActionReady || !(deploymentReadiness?.CanDeploy ?? true)
+                : IsPrimaryActionDisabled(state, activeRun, canExtract);
+            _secondaryButton.Visible = false;
         }
 
         if (!showSettlement)
@@ -325,14 +324,7 @@ public partial class ViewportOverlay : CanvasLayer
             return;
         }
 
-        bool canAdvance = RouteManager.IsCurrentRunZoneCleared(activeRun.Map) && RouteManager.GetNextRunZone(activeRun.Map) != null;
         bool canExtract = RouteManager.CanExtractFromRunMap(activeRun.Map);
-
-        if (canAdvance)
-        {
-            store.AdvanceActiveRunZone(force: true);
-            return;
-        }
 
         if (canExtract)
             store.MarkRunOutcome(RunResolutionOutcome.Extracted);
@@ -358,10 +350,10 @@ public partial class ViewportOverlay : CanvasLayer
         return currentZone != null ? $"{route.Label} / {currentZone.Label}" : "战区行动";
     }
 
-    private static string BuildSubline(GameMode mode, WorldRouteDefinition selectedRoute, RunState? activeRun, RunZoneState? nextZone)
+    private static string BuildSubline(GameMode mode, WorldRouteDefinition selectedRoute, RunState? activeRun, RunZoneState? currentZone)
     {
         if (mode == GameMode.Base)
-            return $"{selectedRoute.Label} / {selectedRoute.Summary}";
+            return $"{selectedRoute.Label} / {BuildMapSummary(selectedRoute)}";
 
         if (activeRun == null)
             return "正在接入行动数据";
@@ -369,7 +361,10 @@ public partial class ViewportOverlay : CanvasLayer
         if (activeRun.Status == RunStateStatus.AwaitingSettlement)
             return $"结果：{FormatOutcome(activeRun.PendingOutcome ?? RunResolutionOutcome.Down)}";
 
-        return nextZone != null ? $"下一块区域：{nextZone.Label}" : "当前区域已是路线终点";
+        if (currentZone != null)
+            return $"{currentZone.Label} / 威胁 {currentZone.ThreatLevel} / {currentZone.Description}";
+
+        return "开放区域行动";
     }
 
     private static string BuildSceneHint(GameState state)
@@ -379,10 +374,10 @@ public partial class ViewportOverlay : CanvasLayer
 
         return state.Mode == GameMode.Base
             ? "前往出击闸门后再部署。"
-            : "前往出口后执行推进或撤离。";
+            : "前往撤离点结束行动，或继续在区域内探索。";
     }
 
-    private static string BuildPrimaryActionLabel(GameMode mode, RunState? activeRun, bool canAdvance)
+    private static string BuildPrimaryActionLabel(GameMode mode, RunState? activeRun)
     {
         if (mode == GameMode.Base)
             return "部署行动";
@@ -390,10 +385,10 @@ public partial class ViewportOverlay : CanvasLayer
         if (activeRun?.Status == RunStateStatus.AwaitingSettlement)
             return "确认结算并返回基地";
 
-        return canAdvance ? "推进下一块区域" : "执行撤离";
+        return "执行撤离";
     }
 
-    private static bool IsPrimaryActionDisabled(GameState state, RunState? activeRun, bool canAdvance, bool canExtract)
+    private static bool IsPrimaryActionDisabled(GameState state, RunState? activeRun, bool canExtract)
     {
         if (state.Mode == GameMode.Base)
             return !state.Runtime.PrimaryActionReady;
@@ -404,14 +399,14 @@ public partial class ViewportOverlay : CanvasLayer
         if (activeRun.Status == RunStateStatus.AwaitingSettlement)
             return false;
 
-        return (!canAdvance && !canExtract) || !state.Runtime.PrimaryActionReady;
+        return !canExtract || !state.Runtime.PrimaryActionReady;
     }
 
     private static string FormatOutcome(RunResolutionOutcome outcome)
     {
         return outcome switch
         {
-            RunResolutionOutcome.BossClear => "路线肃清",
+            RunResolutionOutcome.BossClear => "区域压制",
             RunResolutionOutcome.Down => "行动失败",
             _ => "成功撤离",
         };
@@ -494,10 +489,10 @@ public partial class ViewportOverlay : CanvasLayer
             BorderColor = borderColor,
             ShadowColor = new Color(0.08f, 0.2f, 0.27f, 0.14f),
             ShadowSize = 10,
-            CornerRadiusTopLeft = radius,
-            CornerRadiusTopRight = radius,
-            CornerRadiusBottomRight = radius,
-            CornerRadiusBottomLeft = radius,
+            CornerRadiusTopLeft = 0,
+            CornerRadiusTopRight = 0,
+            CornerRadiusBottomRight = 0,
+            CornerRadiusBottomLeft = 0,
             ContentMarginLeft = left,
             ContentMarginTop = top,
             ContentMarginRight = right,
@@ -524,10 +519,10 @@ public partial class ViewportOverlay : CanvasLayer
             ContentMarginTop = 8,
             ContentMarginRight = 14,
             ContentMarginBottom = 8,
-            CornerRadiusTopLeft = 8,
-            CornerRadiusTopRight = 8,
-            CornerRadiusBottomRight = 8,
-            CornerRadiusBottomLeft = 8,
+            CornerRadiusTopLeft = 0,
+            CornerRadiusTopRight = 0,
+            CornerRadiusBottomRight = 0,
+            CornerRadiusBottomLeft = 0,
         };
         style.SetBorderWidthAll(1);
         return style;
@@ -546,7 +541,7 @@ public partial class ViewportOverlay : CanvasLayer
             16,
             16,
             16,
-            10));
+            0));
         parent.AddChild(card);
 
         var body = new VBoxContainer();

@@ -46,6 +46,7 @@ public class InventoryState
     public List<WeaponType> EquippedWeaponIds { get; set; } = new() { WeaponType.MachineGun, WeaponType.Grenade, WeaponType.Sniper };
     public string? EquippedArmorId { get; set; }
     public List<InventoryItemRecord> StoredItems { get; set; } = new();
+    public GridInventoryState DeploymentPack { get; set; } = new();
 
     public InventoryState Clone() => new()
     {
@@ -53,5 +54,6 @@ public class InventoryState
         EquippedWeaponIds = new List<WeaponType>(EquippedWeaponIds),
         EquippedArmorId = EquippedArmorId,
         StoredItems = StoredItems.Select(i => i.Clone()).ToList(),
+        DeploymentPack = DeploymentPack.Clone(),
     };
 }

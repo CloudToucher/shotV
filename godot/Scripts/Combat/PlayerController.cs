@@ -1,8 +1,10 @@
+using System.Collections.Generic;
+using System.Linq;
 using Godot;
 using ShotV.Core;
 using ShotV.Data;
-using System.Collections.Generic;
-using System.Linq;
+using ShotV.Inventory;
+using ShotV.State;
 
 namespace ShotV.Combat;
 
@@ -10,7 +12,7 @@ public interface IPlayerControllerCallbacks
 {
     void OnWeaponChanged(WeaponDefinition weapon, WeaponSlot slot, bool silent);
     void OnDash(Vector2 position);
-    void OnFire(WeaponDefinition weapon, Vector2 aimPoint);
+    bool OnFire(WeaponDefinition weapon, Vector2 aimPoint);
 }
 
 public class PlayerController
@@ -20,15 +22,56 @@ public class PlayerController
     private WeaponSlot _currentSlot = WeaponSlot.Slot1;
     private Vector2 _lastAimPoint;
     private float _shotCooldown;
+    private bool _isReloading;
+    private float _reloadTimer;
+    private float _reloadDuration;
+    private WeaponType? _reloadWeaponId;
 
     public WeaponDefinition CurrentWeapon => _currentWeapon;
     public WeaponSlot CurrentSlot => _currentSlot;
     public IReadOnlyList<WeaponDefinition> Loadout => _loadout;
     public Vector2 LastAimPoint => _lastAimPoint;
+    public bool IsReloading => _isReloading;
+    public WeaponType? ReloadWeaponId => _isReloading ? _reloadWeaponId : null;
+    public float ReloadProgress => _isReloading && _reloadDuration > 0f
+        ? Mathf.Clamp(1f - _reloadTimer / _reloadDuration, 0f, 1f)
+        : 0f;
 
-    public void Tick(float delta)
+    public string? Tick(float delta, RunState? runState)
     {
         _shotCooldown = Mathf.Max(0f, _shotCooldown - delta);
+        if (!_isReloading)
+            return null;
+
+        _reloadTimer = Mathf.Max(0f, _reloadTimer - delta);
+        if (_reloadTimer > 0f)
+            return null;
+
+        _isReloading = false;
+        if (_reloadWeaponId == null || runState == null || !WeaponData.ById.TryGetValue(_reloadWeaponId.Value, out var weapon))
+        {
+            _reloadWeaponId = null;
+            _reloadDuration = 0f;
+            return null;
+        }
+
+        runState.Player.EnsureWeaponStates();
+        var state = runState.Player.EnsureWeaponState(weapon.Id);
+        state.MagazineCapacity = weapon.MagazineCapacity;
+        var ammo = WeaponData.GetAmmo(weapon, state.AmmoTypeId);
+        int missing = Mathf.Max(0, weapon.MagazineCapacity - state.Magazine);
+        int loaded = missing > 0
+            ? GridInventory.ConsumeItemQuantity(runState.Inventory.Items, ammo.ReserveItemId, missing)
+            : 0;
+        state.Magazine = Mathf.Clamp(state.Magazine + loaded, 0, weapon.MagazineCapacity);
+
+        _reloadWeaponId = null;
+        _reloadDuration = 0f;
+        if (loaded <= 0)
+            return $"{weapon.Label} 无 {ammo.Label} 备弹";
+        if (loaded < missing)
+            return $"{weapon.Label} 装入 {loaded} 发 [{ammo.Label}]";
+        return $"{weapon.Label} 装填完成 [{ammo.Label}]";
     }
 
     public void Reset(IReadOnlyList<WeaponType>? loadoutWeaponIds = null, Vector2? viewportCenter = null)
@@ -37,34 +80,40 @@ public class PlayerController
         _currentWeapon = _loadout[0];
         _currentSlot = WeaponSlot.Slot1;
         _shotCooldown = 0f;
+        CancelReload();
         if (viewportCenter.HasValue)
             _lastAimPoint = new Vector2(viewportCenter.Value.X, viewportCenter.Value.Y - 120f);
     }
 
     public void HandleInput(
-        Vector2 moveIntent, bool dashPressed, bool shootHeld, bool hasPointer,
-        Vector2 pointerWorld, WeaponSlot? weaponSwitch,
-        PlayerAvatar player, Rect2 arenaBounds,
+        Vector2 moveIntent,
+        bool dashPressed,
+        bool shootHeld,
+        bool hasPointer,
+        Vector2 pointerWorld,
+        WeaponSlot? weaponSwitch,
+        PlayerAvatar player,
+        Rect2 arenaBounds,
         IPlayerControllerCallbacks callbacks)
     {
         if (weaponSwitch.HasValue && weaponSwitch.Value != _currentSlot)
+        {
+            CancelReload();
             ApplyWeapon(weaponSwitch.Value, callbacks, false);
+        }
 
         var aimPoint = ResolveAimPoint(hasPointer, pointerWorld, player, arenaBounds);
-        var playerPos = player.PlayerPosition;
-        float aimAngle = Mathf.Atan2(aimPoint.Y - playerPos.Y, aimPoint.X - playerPos.X);
-
         _lastAimPoint = aimPoint;
-        player.SetAimAngle(aimAngle);
+        player.SetAimTarget(aimPoint);
         player.SetMoveIntent(moveIntent.X, moveIntent.Y);
 
         if (dashPressed && player.RequestDash())
-            callbacks.OnDash(playerPos);
+            callbacks.OnDash(player.PlayerPosition);
 
-        if (shootHeld && _shotCooldown == 0f && hasPointer)
+        if (!_isReloading && shootHeld && _shotCooldown == 0f && hasPointer)
         {
-            callbacks.OnFire(_currentWeapon, aimPoint);
-            _shotCooldown = _currentWeapon.Cooldown;
+            if (callbacks.OnFire(_currentWeapon, aimPoint))
+                _shotCooldown = _currentWeapon.Cooldown;
         }
     }
 
@@ -79,10 +128,82 @@ public class PlayerController
         if (index < 0)
             index = 0;
 
+        CancelReload();
         _currentWeapon = _loadout[index];
         _currentSlot = (WeaponSlot)(index + 1);
         _shotCooldown = 0f;
         callbacks.OnWeaponChanged(_currentWeapon, _currentSlot, true);
+    }
+
+    public string? TryStartReload(RunState? runState)
+    {
+        if (runState == null)
+            return null;
+
+        runState.Player.EnsureWeaponStates();
+        var weaponState = runState.Player.EnsureWeaponState(_currentWeapon.Id);
+        if (_isReloading && _reloadWeaponId == _currentWeapon.Id)
+            return $"{_currentWeapon.Label} 正在装填";
+
+        weaponState.MagazineCapacity = _currentWeapon.MagazineCapacity;
+        if (weaponState.Magazine >= weaponState.MagazineCapacity)
+            return $"{_currentWeapon.Label} 弹匣已满";
+
+        var ammo = WeaponData.GetAmmo(_currentWeapon, weaponState.AmmoTypeId);
+        int reserve = GridInventory.CountItemQuantity(runState.Inventory.Items, ammo.ReserveItemId);
+        if (reserve <= 0)
+            return $"{_currentWeapon.Label} 无 {ammo.Label} 备弹";
+
+        StartReload();
+        return $"{_currentWeapon.Label} 装填中 [{ammo.Label}]";
+    }
+
+    public string? TryCycleAmmoType(RunState? runState)
+    {
+        if (runState == null)
+            return null;
+
+        runState.Player.EnsureWeaponStates();
+        var weaponState = runState.Player.EnsureWeaponState(_currentWeapon.Id);
+        weaponState.MagazineCapacity = _currentWeapon.MagazineCapacity;
+        if (_currentWeapon.AmmoTypes.Length <= 1)
+            return $"{_currentWeapon.Label} 没有可切换弹种";
+
+        int currentIndex = System.Array.FindIndex(_currentWeapon.AmmoTypes, ammo => ammo.Id == weaponState.AmmoTypeId);
+        if (currentIndex < 0)
+            currentIndex = 0;
+
+        for (int offset = 1; offset < _currentWeapon.AmmoTypes.Length; offset++)
+        {
+            var candidate = _currentWeapon.AmmoTypes[(currentIndex + offset) % _currentWeapon.AmmoTypes.Length];
+            int reserve = GridInventory.CountItemQuantity(runState.Inventory.Items, candidate.ReserveItemId);
+            if (reserve <= 0)
+                continue;
+
+            weaponState.AmmoTypeId = candidate.Id;
+            weaponState.Magazine = 0;
+            StartReload();
+            return $"{_currentWeapon.Label} 切换至 {candidate.Label}，开始装填";
+        }
+
+        return $"{_currentWeapon.Label} 没有可切换备弹";
+    }
+
+    public void CancelReload()
+    {
+        _isReloading = false;
+        _reloadTimer = 0f;
+        _reloadDuration = 0f;
+        _reloadWeaponId = null;
+    }
+
+    private void StartReload()
+    {
+        _isReloading = true;
+        _reloadWeaponId = _currentWeapon.Id;
+        _reloadDuration = _currentWeapon.ReloadDuration;
+        _reloadTimer = _reloadDuration;
+        _shotCooldown = Mathf.Max(_shotCooldown, 0.08f);
     }
 
     private Vector2 ResolveAimPoint(bool hasPointer, Vector2 pointerWorld, PlayerAvatar player, Rect2 arenaBounds)

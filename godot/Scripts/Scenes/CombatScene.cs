@@ -28,9 +28,12 @@ public partial class CombatScene : Node2D, IPlayerControllerCallbacks, IEncounte
     private float _syncTimer;
     private float _shakeTrauma;
     private float _rewardMultiplier = 1f;
+    private float _weaponSpreadBloom;
+    private float _moveSpreadRatio;
     private bool _isActive;
-    private bool _clearHandled;
     private bool _downHandled;
+    private bool _reloadHoldActive;
+    private float _reloadHoldTimer;
     private const float SyncInterval = 0.2f;
 
     public override void _Ready()
@@ -54,11 +57,9 @@ public partial class CombatScene : Node2D, IPlayerControllerCallbacks, IEncounte
 
         _layout = WorldLayoutBuilder.CreateCombatLayout(new CombatLayoutInput
         {
-            RouteId = mapState.RouteId,
-            ZoneId = currentZone.Id,
-            ZoneLabel = currentZone.Label,
-            ThreatLevel = currentZone.ThreatLevel,
-            AllowsExtraction = currentZone.AllowsExtraction,
+            MapId = mapState.RouteId,
+            MapLabel = RouteData.GetRoute(mapState.RouteId).Label,
+            Regions = mapState.Zones,
             Seed = mapState.LayoutSeed,
         });
 
@@ -67,13 +68,14 @@ public partial class CombatScene : Node2D, IPlayerControllerCallbacks, IEncounte
         _player.SetPlayerPosition(_layout.PlayerSpawn.X, _layout.PlayerSpawn.Y);
 
         _encounter.Reset();
-        _encounter.Resize(_layout.Bounds, _layout.Obstacles, _layout.EnemySpawns, _layout.BossSpawn);
+        _encounter.Resize(_layout.Bounds, _layout.Obstacles, _layout.Regions, _layout.SpawnAnchors);
 
         _renderer.Bind(_layout, _encounter, _player);
         _dmgText.Reset();
 
         var run = GameManager.Instance?.Store.State.Save.Session.ActiveRun;
         _controller.Reset(run?.Player.LoadoutWeaponIds, new Vector2(_layout.Bounds.Size.X / 2f, _layout.Bounds.Size.Y / 2f));
+        run?.Player.EnsureWeaponStates();
         if (run != null)
             _controller.RestoreWeapon(run.Player.CurrentWeaponId, this);
         else
@@ -88,21 +90,28 @@ public partial class CombatScene : Node2D, IPlayerControllerCallbacks, IEncounte
         _syncTimer = SyncInterval;
         _shakeTrauma = 0f;
         _rewardMultiplier = currentZone.RewardMultiplier;
+        _weaponSpreadBloom = 0f;
+        _moveSpreadRatio = 0f;
         _isActive = true;
-        _clearHandled = false;
         _downHandled = false;
+        _reloadHoldActive = false;
+        _reloadHoldTimer = 0f;
+        _player.SetReticleBloom(0f);
 
         float startHealth = run?.Player.Health ?? CombatConstants.PlayerMaxHealth;
         float startMaxHealth = run?.Player.MaxHealth ?? CombatConstants.PlayerMaxHealth;
         _player.SetLifeRatio(startHealth / Mathf.Max(1f, startMaxHealth));
         _hud?.UpdateHealth(startHealth, startMaxHealth);
-        _hud?.UpdateWave(0, 0);
+        _hud?.UpdateWave(currentZone.ThreatLevel, 0);
         _hud?.UpdateEnemyStatus(0, 0);
         _hud?.UpdateQuickSlots(run?.Inventory ?? new GridInventoryState());
         _hud?.UpdateLoadout(_controller.Loadout, _controller.CurrentWeapon.Id);
+        RefreshWeaponRuntime(run);
         _hud?.HideBossHealth();
         _hud?.SetPlayerDown(false);
         _hud?.ShowHint(currentZone.Description, 4f);
+        if (run != null)
+            SyncCurrentRegion(run);
         UpdateCombatRuntime(run);
     }
 
@@ -141,14 +150,21 @@ public partial class CombatScene : Node2D, IPlayerControllerCallbacks, IEncounte
         }
 
         bool canControl = !actionLocked && run?.Status == RunStateStatus.Active && _encounter.State != EncounterState.Down;
+        _moveSpreadRatio = canControl ? Mathf.Clamp(moveIntent.Length(), 0f, 1f) : 0f;
 
-        _controller.Tick(dt);
+        var controllerHint = _controller.Tick(dt, run);
+        if (!string.IsNullOrWhiteSpace(controllerHint))
+            _hud?.ShowHint(controllerHint!, 1.6f);
+
+        HandleReloadInput(dt, canControl, fullscreenUi, run);
         if (canControl)
             _controller.HandleInput(moveIntent, dashPressed, shootHeld, hasPointer, mousePos, weaponSwitch, _player, _layout.Bounds, this);
         else
             _player.SetMoveIntent(0, 0);
 
         _player.UpdatePhysics(dt, _layout.Bounds, _layout.Obstacles);
+        UpdateWeaponFeel(dt);
+        SyncCurrentRegion(run);
         _encounter.Update(dt, _elapsed, _player.PlayerPosition, _player.CollisionRadius, _player.IsDashing, this);
         _vfx.Tick(dt);
         _dmgText.Tick(dt);
@@ -187,6 +203,8 @@ public partial class CombatScene : Node2D, IPlayerControllerCallbacks, IEncounte
         if (!fullscreenUi)
             _minimap?.UpdateData(_layout.Bounds, _player.PlayerPosition, _encounter.Enemies, _layout.Obstacles, _layout.Markers);
 
+        if (run != null)
+            _renderer.BindGroundLoot(run.GroundLoot);
         _renderer.Refresh();
 
         // Quick slots
@@ -203,9 +221,7 @@ public partial class CombatScene : Node2D, IPlayerControllerCallbacks, IEncounte
         }
 
         // Check encounter state transitions
-        if (_encounter.State == EncounterState.Clear && !_clearHandled)
-            OnEncounterCleared();
-        else if (_encounter.State == EncounterState.Down && !_downHandled)
+        if (_encounter.State == EncounterState.Down && !_downHandled)
             OnPlayerDowned();
     }
 
@@ -215,7 +231,8 @@ public partial class CombatScene : Node2D, IPlayerControllerCallbacks, IEncounte
     {
         var drop = LootManager.FindNearbyGroundLoot(_player.PlayerPosition, run.GroundLoot);
         if (drop == null) return false;
-        if (LootManager.TryPickupLoot(drop, run.Inventory, run.GroundLoot))
+        var pickup = LootManager.TryPickupLoot(drop, run.Inventory, run.GroundLoot);
+        if (pickup.PickedUp)
         {
             _hud?.ShowHint($"拾取 {(ItemData.ById.TryGetValue(drop.Item.ItemId, out var d) ? d.Label : drop.Item.ItemId)}", 1.5f);
             _vfx.SpawnRing(drop.X, drop.Y, 8, 32, 0.18f, Palette.MinimapMarker, 2.5f);
@@ -227,7 +244,7 @@ public partial class CombatScene : Node2D, IPlayerControllerCallbacks, IEncounte
 
     private void TryStartExitAction(RunState run)
     {
-        if (_encounter.State != EncounterState.Active && _encounter.State != EncounterState.Clear) return;
+        if (_encounter.State != EncounterState.Active) return;
         _exitAction.TryStart(_player.PlayerPosition, _layout, run.Map);
     }
 
@@ -236,26 +253,14 @@ public partial class CombatScene : Node2D, IPlayerControllerCallbacks, IEncounte
         var store = GameManager.Instance?.Store;
         if (store == null) return;
         _syncTimer = SyncInterval;
-        if (kind == ExitActionKind.Advance)
-        {
-            store.AdvanceActiveRunZone(true);
-            var nextRun = store.State.Save.Session.ActiveRun;
-            if (nextRun != null)
-                StartEncounter(nextRun.Map);
-            _hud?.ShowHint("推进至下一区域", 3f);
-            GD.Print("[CombatScene] Zone advance triggered.");
-        }
-        else
-        {
-            store.MarkRunOutcome(RunResolutionOutcome.Extracted);
-            _hud?.ShowHint("撤离校验完成，等待结算确认", 3f);
-            GD.Print("[CombatScene] Extraction triggered.");
-        }
+        store.MarkRunOutcome(RunResolutionOutcome.Extracted);
+        _hud?.ShowHint("撤离校验完成，等待结算确认", 3f);
+        GD.Print("[CombatScene] Extraction triggered.");
     }
 
-    private void OnGrenadeDetonated(Vector2 position)
+    private void OnGrenadeDetonated(GrenadeDetonationPayload payload)
     {
-        _encounter.ApplyExplosionDamage(position.X, position.Y, WeaponData.Grenade.SplashRadius, CombatConstants.GrenadeDamage, this);
+        _encounter.ApplyExplosionDamage(payload.Position.X, payload.Position.Y, payload.Radius, payload.Damage, payload.ArmorPenetration, payload.PierceCount, this);
         AddShake(0.12f);
     }
 
@@ -305,15 +310,6 @@ public partial class CombatScene : Node2D, IPlayerControllerCallbacks, IEncounte
             run.Inventory.Items.Remove(record);
     }
 
-    private void OnEncounterCleared()
-    {
-        _clearHandled = true;
-        var store = GameManager.Instance?.Store;
-        store?.MarkCurrentZoneCleared();
-        _hud?.ShowHint("区域已压制，前往出口执行推进或撤离", 3f);
-        GD.Print("[CombatScene] Encounter cleared.");
-    }
-
     private void OnPlayerDowned()
     {
         _downHandled = true;
@@ -329,11 +325,17 @@ public partial class CombatScene : Node2D, IPlayerControllerCallbacks, IEncounte
     {
         var run = GameManager.Instance?.Store.State.Save.Session.ActiveRun;
         if (run != null)
+        {
+            run.Player.EnsureWeaponStates();
             run.Player.CurrentWeaponId = weapon.Id;
+        }
 
         _player.SetWeaponStyle(weapon.Id);
+        _weaponSpreadBloom = 0f;
+        _player.SetReticleBloom(0f);
         _hud?.UpdateWeapon(weapon);
         _hud?.UpdateLoadout(_controller.Loadout, weapon.Id);
+        RefreshWeaponRuntime(run);
         if (!silent) _player.TriggerWeaponSwap();
     }
 
@@ -346,92 +348,106 @@ public partial class CombatScene : Node2D, IPlayerControllerCallbacks, IEncounte
         AddShake(0.08f);
     }
 
-    public void OnFire(WeaponDefinition weapon, Vector2 aimPoint)
+    public bool OnFire(WeaponDefinition weapon, Vector2 aimPoint)
     {
-        _player.TriggerShot(1f);
         var store = GameManager.Instance?.Store;
         var run = store?.State.Save.Session.ActiveRun;
+        if (run == null)
+            return false;
+
+        run.Player.EnsureWeaponStates();
+        var weaponState = run.Player.EnsureWeaponState(weapon.Id);
+        weaponState.MagazineCapacity = weapon.MagazineCapacity;
+        var ammo = WeaponData.GetAmmo(weapon, weaponState.AmmoTypeId);
+        if (weaponState.Magazine <= 0)
+        {
+            _hud?.ShowHint($"{weapon.Label} 空仓，按 R 换弹", 1.25f);
+            return false;
+        }
+
+        float spreadDegrees = ResolveShotSpreadDegrees(weapon);
+        weaponState.Magazine = Mathf.Max(0, weaponState.Magazine - 1);
+        RefreshWeaponRuntime(run);
+        ApplyShotFeel(weapon);
 
         switch (weapon.Id)
         {
             case WeaponType.MachineGun:
-                FireMachineGun(weapon, aimPoint);
-                if (run != null) run.Player.ShotsFired++;
-                break;
+                FireMachineGun(weapon, ammo, aimPoint, spreadDegrees);
+                _encounter.NotifyStimulus(_player.PlayerPosition, 360f);
+                run.Player.ShotsFired++;
+                return true;
             case WeaponType.Sniper:
-                FireSniper(weapon, aimPoint);
-                if (run != null) run.Player.ShotsFired++;
-                break;
+                FireSniper(weapon, ammo, aimPoint, spreadDegrees);
+                _encounter.NotifyStimulus(_player.PlayerPosition, 520f);
+                run.Player.ShotsFired++;
+                return true;
             case WeaponType.Grenade:
-                FireGrenade(aimPoint);
-                if (run != null) run.Player.GrenadesThrown++;
-                break;
+                FireGrenade(weapon, ammo, aimPoint, spreadDegrees);
+                _encounter.NotifyStimulus(_player.PlayerPosition, 240f);
+                run.Player.GrenadesThrown++;
+                return true;
         }
+
+        return false;
     }
 
-    private void FireMachineGun(WeaponDefinition weapon, Vector2 aimPoint)
+    private void FireMachineGun(WeaponDefinition weapon, WeaponAmmoDefinition ammo, Vector2 aimPoint, float spreadDegrees)
     {
         var origin = _player.GetShotOrigin(38f);
-        float aimAngle = Mathf.Atan2(aimPoint.Y - origin.Y, aimPoint.X - origin.X);
-        var farTarget = origin + new Vector2(Mathf.Cos(aimAngle), Mathf.Sin(aimAngle)) * weapon.Range;
+        var farTarget = ResolveSpreadTarget(origin, aimPoint, weapon.Range, spreadDegrees);
         var clipped = WorldCollision.ClipSegmentToWorld(origin, farTarget, _layout.Bounds, _layout.Obstacles);
         var hits = _encounter.ResolveSegmentHits(origin, clipped, weapon.EffectWidth * 0.65f);
 
-        var trailEnd = clipped;
-        if (hits.Count > 0)
-        {
-            trailEnd = new Vector2(hits[0].PointX, hits[0].PointY);
-            _encounter.DamageEnemy(hits[0].Enemy, CombatConstants.MachineGunDamage, hits[0].PointX, hits[0].PointY, this);
-        }
+        int hitCapacity = ResolveHitCapacity(ammo);
+        for (int index = 0; index < hits.Count && index < hitCapacity; index++)
+            ApplyAmmoHit(hits[index], ammo, index);
 
-        _vfx.SpawnNeedle(origin, trailEnd, weapon.EffectWidth, weapon.EffectDuration, Palette.Shot, Palette.Accent);
-        _vfx.SpawnRing(origin.X, origin.Y, 4, 14, 0.08f, Palette.AccentSoft, 2f);
+        var trailEnd = hits.Count > hitCapacity && hitCapacity > 0
+            ? new Vector2(hits[hitCapacity - 1].PointX, hits[hitCapacity - 1].PointY)
+            : clipped;
+
+        var trailColor = ResolveAmmoFeedbackColor(ammo);
+        _vfx.SpawnNeedle(origin, trailEnd, weapon.EffectWidth, weapon.EffectDuration, trailColor, Palette.Accent);
+        _vfx.SpawnRing(origin.X, origin.Y, 4, 14, 0.08f, trailColor, 2f);
         AddShake(0.02f);
     }
 
-    private void FireSniper(WeaponDefinition weapon, Vector2 aimPoint)
+    private void FireSniper(WeaponDefinition weapon, WeaponAmmoDefinition ammo, Vector2 aimPoint, float spreadDegrees)
     {
         var origin = _player.GetShotOrigin(38f);
-        float aimAngle = Mathf.Atan2(aimPoint.Y - origin.Y, aimPoint.X - origin.X);
-        var farTarget = origin + new Vector2(Mathf.Cos(aimAngle), Mathf.Sin(aimAngle)) * 100000f;
+        var farTarget = ResolveSpreadTarget(origin, aimPoint, weapon.Range, spreadDegrees);
         var clipped = WorldCollision.ClipSegmentToWorld(origin, farTarget, _layout.Bounds, _layout.Obstacles);
         var hits = _encounter.ResolveSegmentHits(origin, clipped, weapon.EffectWidth * 0.65f);
 
-        float remaining = CombatConstants.SniperDamage;
-        foreach (var hit in hits)
-        {
-            if (remaining <= 0) break;
-            float applied = Mathf.Min(remaining, hit.Enemy.Health);
-            _encounter.DamageEnemy(hit.Enemy, applied, hit.PointX, hit.PointY, this);
-            remaining -= applied;
-        }
+        int hitCapacity = ResolveHitCapacity(ammo);
+        for (int index = 0; index < hits.Count && index < hitCapacity; index++)
+            ApplyAmmoHit(hits[index], ammo, index);
 
-        _vfx.SpawnNeedle(origin, clipped, weapon.EffectWidth, weapon.EffectDuration, Palette.Shot, Palette.PlayerCore);
-        _vfx.SpawnRing(origin.X, origin.Y, 6, 22, 0.12f, Palette.AccentSoft, 3f);
+        var trailEnd = hits.Count > hitCapacity && hitCapacity > 0
+            ? new Vector2(hits[hitCapacity - 1].PointX, hits[hitCapacity - 1].PointY)
+            : clipped;
+
+        var trailColor = ResolveAmmoFeedbackColor(ammo);
+        _vfx.SpawnNeedle(origin, trailEnd, weapon.EffectWidth, weapon.EffectDuration, trailColor, Palette.PlayerCore);
+        _vfx.SpawnRing(origin.X, origin.Y, 6, 22, 0.12f, trailColor, 3f);
         AddShake(0.06f);
     }
 
-    private void FireGrenade(Vector2 aimPoint)
+    private void FireGrenade(WeaponDefinition weapon, WeaponAmmoDefinition ammo, Vector2 aimPoint, float spreadDegrees)
     {
         var origin = _player.GetShotOrigin(38f);
-        _vfx.SpawnGrenade(origin, aimPoint);
-        _vfx.SpawnRing(origin.X, origin.Y, 8, 26, 0.16f, Palette.AccentSoft, 3f);
-        _player.TriggerShot(0.78f);
+        var jitteredTarget = ResolveSpreadTarget(origin, aimPoint, weapon.Range, spreadDegrees, preserveDistance: true);
+        var landingPoint = ResolveGrenadeLandingPoint(origin, jitteredTarget);
+        float duration = Mathf.Lerp(0.22f, 0.46f, Mathf.Clamp(origin.DistanceTo(landingPoint) / Mathf.Max(1f, weapon.Range), 0f, 1f));
+        _vfx.SpawnGrenade(origin, landingPoint, weapon.SplashRadius, ammo.Damage, ammo.ArmorPenetration, ammo.PierceCount, duration);
+        _vfx.SpawnRing(origin.X, origin.Y, 8, 26, 0.16f, ResolveAmmoFeedbackColor(ammo), 3f);
         AddShake(0.07f);
     }
 
     // IEncounterCallbacks
     public void OnWaveStarted(int waveIndex, string hint)
     {
-        _hud?.UpdateWave(waveIndex, _encounter.KillCount);
-        _hud?.ShowHint(hint, 3f);
-
-        var run = GameManager.Instance?.Store.State.Save.Session.ActiveRun;
-        if (run != null)
-        {
-            run.Map.CurrentWave = waveIndex;
-            run.Map.HighestWave = Mathf.Max(run.Map.HighestWave, waveIndex);
-        }
     }
 
     public void OnEnemySpawned(HostileType type)
@@ -497,7 +513,8 @@ public partial class CombatScene : Node2D, IPlayerControllerCallbacks, IEncounte
         {
             run.Stats.Kills++;
             run.Map.HostilesRemaining = Mathf.Max(0, run.Map.HostilesRemaining - 1);
-            LootManager.ApplyKillRewards(enemy, run, _rewardMultiplier, _elapsed);
+            var rewardPosition = new Vector2(enemy.X, enemy.Y);
+            LootManager.ApplyKillRewards(enemy, run, ResolveRewardRegion(rewardPosition), ResolveRewardMultiplier(rewardPosition), _elapsed);
         }
 
         float ringRadius = enemy.Type == HostileType.Boss ? 88f : 50f;
@@ -505,7 +522,7 @@ public partial class CombatScene : Node2D, IPlayerControllerCallbacks, IEncounte
         _vfx.SpawnRing(enemy.X, enemy.Y, 10, ringRadius, 0.22f, enemy.Definition.Colors.Glow, enemy.Type == HostileType.Boss ? 3.8f : 3f);
         _vfx.SpawnParticles(enemy.X, enemy.Y, particleCount, enemy.Definition.Colors.Glow);
         AddShake(enemy.Type == HostileType.Boss ? 0.27f : 0.1f);
-        _hud?.UpdateWave(_encounter.WaveIndex, _encounter.KillCount);
+        _hud?.UpdateWave(Mathf.Max(1, run?.Map.CurrentWave ?? 1), _encounter.KillCount);
     }
 
     public void OnPlayerDamaged(float amount, float sourceX, float sourceY)
@@ -546,16 +563,12 @@ public partial class CombatScene : Node2D, IPlayerControllerCallbacks, IEncounte
         if (run == null)
             return;
 
+        _hud?.UpdateWave(Mathf.Max(1, run.Map.CurrentWave), _encounter.KillCount);
         _hud?.UpdateEnemyStatus(_encounter.Enemies.Count, _encounter.PendingSpawnCount);
         _hud?.UpdateQuickSlots(run.Inventory);
         _hud?.UpdateLoadout(_controller.Loadout, _controller.CurrentWeapon.Id);
-
-        var boss = _encounter.GetBoss();
-        if (boss != null)
-            _hud?.ShowBossHealth(boss.Definition.Label, boss.Health, boss.Definition.MaxHealth, boss.Phase);
-        else
-            _hud?.HideBossHealth();
-
+        RefreshWeaponRuntime(run);
+        _hud?.HideBossHealth();
         _hud?.SetPlayerDown(_encounter.State == EncounterState.Down);
     }
 
@@ -584,8 +597,8 @@ public partial class CombatScene : Node2D, IPlayerControllerCallbacks, IEncounte
         else
         {
             var exitMarker = FindNearbyExitMarker();
-            bool canAdvance = RouteManager.IsCurrentRunZoneCleared(run.Map) && RouteManager.GetNextRunZone(run.Map) != null;
             bool canExtract = RouteManager.CanExtractFromRunMap(run.Map);
+            var currentZone = RouteManager.GetCurrentRunZone(run.Map);
 
             if (exitMarker != null)
             {
@@ -594,7 +607,7 @@ public partial class CombatScene : Node2D, IPlayerControllerCallbacks, IEncounte
                 nearbyMarkerKind = MarkerKind.Extraction;
             }
 
-            primaryReady = !_exitAction.IsActive && exitMarker != null && (canAdvance || canExtract);
+            primaryReady = !_exitAction.IsActive && exitMarker != null && canExtract;
 
             if (_exitAction.IsActive)
             {
@@ -602,11 +615,9 @@ public partial class CombatScene : Node2D, IPlayerControllerCallbacks, IEncounte
             }
             else if (exitMarker == null)
             {
-                hint = "前往出口后执行推进或撤离。";
-            }
-            else if (canAdvance && RouteManager.GetNextRunZone(run.Map) != null)
-            {
-                hint = $"推进至 {RouteManager.GetNextRunZone(run.Map)!.Label}";
+                hint = currentZone != null
+                    ? $"{currentZone.Label} / 威胁 {currentZone.ThreatLevel} / 保持机动并留意巡游敌群。"
+                    : "在开放区域内探索并保持机动。";
             }
             else if (canExtract)
             {
@@ -634,6 +645,7 @@ public partial class CombatScene : Node2D, IPlayerControllerCallbacks, IEncounte
         if (!_isActive)
             return null;
 
+        var run = GameManager.Instance?.Store?.State.Save.Session.ActiveRun;
         var enemies = new List<Vector2>(_encounter.Enemies.Count);
         foreach (var enemy in _encounter.Enemies)
             enemies.Add(new Vector2(enemy.X, enemy.Y));
@@ -643,7 +655,7 @@ public partial class CombatScene : Node2D, IPlayerControllerCallbacks, IEncounte
             Bounds = _layout.Bounds,
             CameraBounds = BuildCameraBounds(),
             PlayerPosition = _player.PlayerPosition,
-            HighlightedMarkerId = FindHighlightedMarkerId(),
+            HighlightedMarkerId = FindHighlightedMarkerId(run),
             Obstacles = new List<WorldObstacle>(_layout.Obstacles),
             Markers = new List<WorldMarker>(_layout.Markers),
             EnemyPositions = enemies,
@@ -689,17 +701,14 @@ public partial class CombatScene : Node2D, IPlayerControllerCallbacks, IEncounte
         return count;
     }
 
-    private string? FindHighlightedMarkerId()
+    private string? FindHighlightedMarkerId(RunState? run)
     {
         var exitMarker = FindNearbyExitMarker();
         if (exitMarker != null)
             return exitMarker.Value.id;
 
-        foreach (var marker in _layout.Markers)
-        {
-            if (marker.Kind == MarkerKind.Objective)
-                return marker.Id;
-        }
+        if (run != null)
+            return $"region-{run.Map.CurrentZoneId}";
 
         return _layout.Markers.Count > 0 ? _layout.Markers[0].Id : null;
     }
@@ -716,5 +725,188 @@ public partial class CombatScene : Node2D, IPlayerControllerCallbacks, IEncounte
         }
 
         return null;
+    }
+
+    private RunZoneState? SyncCurrentRegion(RunState? run)
+    {
+        if (run == null)
+            return null;
+
+        var zone = RouteManager.ResolveZoneAtPosition(run.Map, _layout, _player.PlayerPosition);
+        if (zone == null)
+            return null;
+
+        if (run.Map.CurrentZoneId != zone.Id)
+            RouteManager.SetCurrentRunZone(run.Map, zone.Id);
+
+        run.Map.CurrentWave = zone.ThreatLevel;
+        run.Map.HighestWave = Mathf.Max(run.Map.HighestWave, zone.ThreatLevel);
+        run.Stats.HighestWave = Mathf.Max(run.Stats.HighestWave, zone.ThreatLevel);
+        _rewardMultiplier = zone.RewardMultiplier;
+        return zone;
+    }
+
+    private float ResolveRewardMultiplier(Vector2 position)
+    {
+        var region = _layout.GetRegionAtPosition(position);
+        return region?.RewardMultiplier ?? _rewardMultiplier;
+    }
+
+    private WorldRegion? ResolveRewardRegion(Vector2 position)
+    {
+        return _layout.GetRegionAtPosition(position);
+    }
+
+    private Vector2 ResolveGrenadeLandingPoint(Vector2 origin, Vector2 aimPoint)
+    {
+        var clampedTarget = new Vector2(
+            Mathf.Clamp(aimPoint.X, _layout.Bounds.Position.X, _layout.Bounds.End.X),
+            Mathf.Clamp(aimPoint.Y, _layout.Bounds.Position.Y, _layout.Bounds.End.Y));
+        return WorldCollision.ClipSegmentToWorld(origin, clampedTarget, _layout.Bounds, _layout.Obstacles, 8f);
+    }
+
+    private void HandleReloadInput(float delta, bool canControl, bool fullscreenUi, RunState? run)
+    {
+        bool reloadPressed = !fullscreenUi && Input.IsActionJustPressed("reload_weapon");
+        bool reloadHeld = !fullscreenUi && Input.IsActionPressed("reload_weapon");
+
+        if (!canControl)
+        {
+            _reloadHoldActive = false;
+            _reloadHoldTimer = 0f;
+            return;
+        }
+
+        if (reloadPressed)
+        {
+            _reloadHoldActive = true;
+            _reloadHoldTimer = 0f;
+        }
+
+        if (!_reloadHoldActive)
+            return;
+
+        if (reloadHeld)
+        {
+            _reloadHoldTimer += delta;
+            return;
+        }
+
+        string? hint = _reloadHoldTimer >= CombatConstants.AmmoSwitchHoldSeconds
+            ? _controller.TryCycleAmmoType(run)
+            : _controller.TryStartReload(run);
+        if (!string.IsNullOrWhiteSpace(hint))
+            _hud?.ShowHint(hint!, 1.5f);
+
+        RefreshWeaponRuntime(run);
+        _reloadHoldActive = false;
+        _reloadHoldTimer = 0f;
+    }
+
+    private void RefreshWeaponRuntime(RunState? run)
+    {
+        if (run == null)
+            return;
+
+        run.Player.EnsureWeaponStates();
+        _hud?.UpdateWeaponRuntime(run.Player, run.Inventory, _controller.ReloadWeaponId, _controller.ReloadProgress);
+    }
+
+    private void UpdateWeaponFeel(float delta)
+    {
+        var weapon = _controller.CurrentWeapon;
+        _weaponSpreadBloom = Mathf.MoveToward(_weaponSpreadBloom, 0f, weapon.SpreadRecoveryPerSecond * delta);
+        _player.SetReticleBloom(ResolveSpreadRatio(weapon));
+    }
+
+    private void ApplyShotFeel(WeaponDefinition weapon)
+    {
+        _weaponSpreadBloom = Mathf.Min(weapon.MaxSpreadDegrees, _weaponSpreadBloom + weapon.SpreadPerShotDegrees);
+        _player.TriggerShot(weapon.RecoilKick, weapon.RecoilTwistDegrees);
+        _player.SetReticleBloom(ResolveSpreadRatio(weapon));
+    }
+
+    private void ApplyAmmoHit(SegmentHit hit, WeaponAmmoDefinition ammo, int hitIndex)
+    {
+        float armorScale = ResolveArmorScale(ammo, hit.Enemy.Definition);
+        float damage = ammo.Damage * armorScale;
+        _encounter.DamageEnemy(hit.Enemy, damage, hit.PointX, hit.PointY, this);
+
+        var feedbackColor = ResolveAmmoFeedbackColor(ammo);
+        _vfx.SpawnParticles(hit.PointX, hit.PointY, 4 + Mathf.Min(3, ammo.PierceCount), feedbackColor);
+        _player.TriggerHitConfirm(armorScale >= 1f ? 0.7f : 0.42f);
+
+        int armorGap = Mathf.Max(0, hit.Enemy.Definition.ArmorLevel - ammo.ArmorPenetration);
+        if (hit.Enemy.Definition.ArmorLevel > 0)
+        {
+            string? status = armorGap switch
+            {
+                0 => "PEN",
+                >= 2 => "ARMOR",
+                _ => null,
+            };
+
+            if (!string.IsNullOrWhiteSpace(status))
+            {
+                Color statusColor = armorGap == 0 ? Palette.Accent : Palette.Warning;
+                _dmgText.SpawnStatusText(hit.PointX, hit.PointY, status!, statusColor);
+            }
+        }
+
+        if (hitIndex == 1 && ammo.PierceCount > 0)
+            _dmgText.SpawnStatusText(hit.PointX, hit.PointY - 12f, "PIERCE", feedbackColor);
+    }
+
+    private float ResolveShotSpreadDegrees(WeaponDefinition weapon)
+    {
+        float moveSpread = weapon.MoveSpreadDegrees * (_player.IsDashing ? 1f : _moveSpreadRatio);
+        return Mathf.Clamp(weapon.BaseSpreadDegrees + _weaponSpreadBloom + moveSpread, 0f, weapon.MaxSpreadDegrees);
+    }
+
+    private float ResolveSpreadRatio(WeaponDefinition weapon)
+    {
+        return weapon.MaxSpreadDegrees <= 0.001f
+            ? 0f
+            : Mathf.Clamp(ResolveShotSpreadDegrees(weapon) / weapon.MaxSpreadDegrees, 0f, 1f);
+    }
+
+    private Vector2 ResolveSpreadTarget(Vector2 origin, Vector2 aimPoint, float range, float spreadDegrees, bool preserveDistance = false)
+    {
+        float aimAngle = Mathf.Atan2(aimPoint.Y - origin.Y, aimPoint.X - origin.X);
+        float spreadOffset = Mathf.DegToRad((GD.Randf() - GD.Randf()) * spreadDegrees);
+        float targetDistance = preserveDistance
+            ? Mathf.Min(origin.DistanceTo(aimPoint), range)
+            : range;
+
+        return origin + new Vector2(Mathf.Cos(aimAngle + spreadOffset), Mathf.Sin(aimAngle + spreadOffset)) * targetDistance;
+    }
+
+    private static Color ResolveAmmoFeedbackColor(WeaponAmmoDefinition ammo)
+    {
+        return ammo.Id switch
+        {
+            "ap" or "sabot" or "breach" => Palette.Frame,
+            "hp" or "exp" => Palette.Danger,
+            "arc" => Palette.Dash,
+            _ => Palette.Accent,
+        };
+    }
+
+    private static int ResolveHitCapacity(WeaponAmmoDefinition ammo)
+    {
+        return Mathf.Max(1, ammo.PierceCount + 1);
+    }
+
+    private static float ResolveArmorScale(WeaponAmmoDefinition ammo, HostileDefinition target)
+    {
+        int gap = Mathf.Max(0, target.ArmorLevel - ammo.ArmorPenetration);
+        return gap switch
+        {
+            0 => 1f,
+            1 => 0.78f,
+            2 => 0.58f,
+            3 => 0.4f,
+            _ => 0.28f,
+        };
     }
 }

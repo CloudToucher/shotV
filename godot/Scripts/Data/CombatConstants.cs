@@ -11,6 +11,8 @@ public static class CombatConstants
     public const float MachineGunDamage = 11f;
     public const float GrenadeDamage = 34f;
     public const float SniperDamage = 48f;
+    public const int GrenadeCapacity = 6;
+    public const float AmmoSwitchHoldSeconds = 0.42f;
     public const float WaveStartDelay = 0.75f;
     public const float NextWaveDelay = 1.1f;
     public const float PlayerRadius = 16f;

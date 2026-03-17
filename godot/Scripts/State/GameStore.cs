@@ -39,6 +39,21 @@ public class GameState
     public SceneRuntimeState Runtime { get; set; } = new();
 }
 
+public class DeploymentReadinessResult
+{
+    public bool CanDeploy { get; set; }
+    public bool HasWarnings { get; set; }
+    public string StatusLabel { get; set; } = "";
+    public string Detail { get; set; } = "";
+    public int HighestThreat { get; set; }
+    public int StagedUnits { get; set; }
+    public int HealingUnits { get; set; }
+    public int MobilityUnits { get; set; }
+    public int UtilityUnits { get; set; }
+    public int OccupiedCells { get; set; }
+    public int CapacityCells { get; set; }
+}
+
 public class GameStore
 {
     public event Action<GameState, GameState>? StateChanged;
@@ -54,6 +69,14 @@ public class GameStore
 
     public void Initialize(SaveState save)
     {
+        save.Inventory ??= new InventoryState();
+        save.Inventory.DeploymentPack ??= new GridInventoryState();
+        save.Inventory.DeploymentPack.Items = save.Inventory.DeploymentPack.Items
+            .Where(IsAllowedDeploymentPackItem)
+            .Select(item => item.Clone())
+            .ToList();
+        save.Inventory.DeploymentPack.QuickSlots = new string?[GridInventoryState.RunQuickSlotCount];
+
         _state = new GameState
         {
             Mode = save.Session.ActiveRun != null ? GameMode.Combat : GameMode.Base,
@@ -65,14 +88,24 @@ public class GameStore
 
     public void SelectNextWorldRoute()
     {
-        SelectWorldRoute(RouteData.GetNextRouteId(_state.Save.World.SelectedRouteId));
+        SelectNextWorldMap();
     }
 
     public void SelectWorldRoute(string routeId)
     {
+        SelectWorldMap(routeId);
+    }
+
+    public void SelectNextWorldMap()
+    {
+        SelectWorldMap(RouteData.GetNextMapId(_state.Save.World.SelectedRouteId));
+    }
+
+    public void SelectWorldMap(string mapId)
+    {
         if (_state.Save.Session.ActiveRun != null) return;
-        var route = RouteData.GetRoute(routeId);
-        var nextMap = RouteManager.CreateRunMapStateForRoute(routeId);
+        var map = RouteData.GetMap(mapId);
+        var nextMap = RouteManager.CreateRunMapStateForRoute(map.Id);
         var save = _state.Save.Clone();
         save.UpdatedAt = Now();
         save.World.SelectedRouteId = nextMap.RouteId;
@@ -81,17 +114,42 @@ public class GameStore
         Commit(_state.Mode, save);
     }
 
+    public DeploymentReadinessResult EvaluateDeploymentReadiness()
+    {
+        return BuildDeploymentReadiness(_state.Save);
+    }
+
     public void DeployCombat()
     {
         if (_state.Save.Session.ActiveRun != null || !_state.Runtime.PrimaryActionReady) return;
+        var readiness = BuildDeploymentReadiness(_state.Save);
+        if (!readiness.CanDeploy) return;
+
         var timestamp = Now();
         var runId = BuildRunId();
         var loadout = BuildRunLoadout(_state.Save);
         var mapState = RouteManager.CreateRunMapStateForRoute(_state.Save.World.SelectedRouteId);
         var nextRun = RunState.CreateInitial(runId, timestamp, loadout, mapState);
         var save = _state.Save.Clone();
+        nextRun.Inventory = save.Inventory.DeploymentPack.Clone();
+        nextRun.Inventory.Items = nextRun.Inventory.Items
+            .Where(IsAllowedDeploymentPackItem)
+            .Select(item => item.Clone())
+            .ToList();
+        nextRun.Inventory.Items = ShotV.Inventory.GridInventory.StoreItemsInGrid(
+            nextRun.Inventory.Columns,
+            nextRun.Inventory.Rows,
+            nextRun.Inventory.Items,
+            BuildInitialReserveAmmoItems(loadout)).Items;
+        nextRun.Inventory.QuickSlots = new string?[GridInventoryState.RunQuickSlotCount];
+        nextRun.Resources = ShotV.Inventory.GridInventory.BuildResourceLedgerFromItems(nextRun.Inventory.Items);
         save.UpdatedAt = timestamp;
         save.Base.DeploymentCount++;
+        save.Inventory.DeploymentPack = new GridInventoryState
+        {
+            Columns = nextRun.Inventory.Columns,
+            Rows = nextRun.Inventory.Rows,
+        };
         save.Session.ActiveRun = nextRun;
         save.World.ActiveRouteId = mapState.RouteId;
         MergeWorldWithRunMap(save.World, mapState);
@@ -321,6 +379,35 @@ public class GameStore
         Commit(_state.Mode, save);
     }
 
+    public void CraftWorkshopItem(string itemId)
+    {
+        if (_state.Save.Session.ActiveRun != null)
+            return;
+        if (!ItemData.ById.TryGetValue(itemId, out var definition) || definition.CraftCost == null)
+            return;
+
+        var save = _state.Save.Clone();
+        if (!CanAfford(save.Base.Resources, definition.CraftCost))
+            return;
+
+        var craftedItem = ShotV.Inventory.GridInventory.CreateItemRecord(itemId, 1);
+        if (craftedItem == null)
+            return;
+
+        var placement = ShotV.Inventory.GridInventory.PlaceItemInGrid(
+            save.Inventory.StashColumns,
+            save.Inventory.StashRows,
+            save.Inventory.StoredItems,
+            craftedItem);
+        if (!placement.Placed)
+            return;
+
+        SpendResources(save.Base.Resources, definition.CraftCost);
+        save.Inventory.StoredItems = placement.Items;
+        save.UpdatedAt = Now();
+        Commit(GameMode.Base, save);
+    }
+
     public void UpdateBaseStashItems(List<InventoryItemRecord> items)
     {
         if (_state.Save.Session.ActiveRun != null)
@@ -328,6 +415,22 @@ public class GameStore
 
         var save = _state.Save.Clone();
         save.Inventory.StoredItems = ShotV.Inventory.GridInventory.CloneItems(items);
+        save.UpdatedAt = Now();
+        Commit(GameMode.Base, save);
+    }
+
+    public void UpdateDeploymentInventoryState(List<InventoryItemRecord> stashItems, List<InventoryItemRecord> deploymentPackItems)
+    {
+        if (_state.Save.Session.ActiveRun != null)
+            return;
+
+        var save = _state.Save.Clone();
+        save.Inventory.StoredItems = ShotV.Inventory.GridInventory.CloneItems(stashItems);
+        save.Inventory.DeploymentPack.Items = deploymentPackItems
+            .Where(IsAllowedDeploymentPackItem)
+            .Select(item => item.Clone())
+            .ToList();
+        save.Inventory.DeploymentPack.QuickSlots = new string?[GridInventoryState.RunQuickSlotCount];
         save.UpdatedAt = Now();
         Commit(GameMode.Base, save);
     }
@@ -475,13 +578,23 @@ public class GameStore
             };
         }
 
+        var stashCandidates = run.Inventory.Items
+            .Where(IsPersistedBaseInventoryItem)
+            .ToList();
+        var convertedItems = run.Inventory.Items
+            .Where(item => !IsPersistedBaseInventoryItem(item))
+            .ToList();
+
         var placement = ShotV.Inventory.GridInventory.PlaceItemsInGrid(
             inventory.StashColumns, inventory.StashRows,
-            inventory.StoredItems, run.Inventory.Items);
+            inventory.StoredItems, stashCandidates);
 
         var recoveredIds = new HashSet<string>(placement.PlacedIds);
+        foreach (var item in convertedItems)
+            recoveredIds.Add(item.Id);
+
         var recoveredItems = run.Inventory.Items.Where(i => recoveredIds.Contains(i.Id)).ToList();
-        var lostItems = run.Inventory.Items.Where(i => !recoveredIds.Contains(i.Id)).ToList();
+        var lostItems = stashCandidates.Where(i => !recoveredIds.Contains(i.Id)).ToList();
 
         var newInventory = inventory.Clone();
         newInventory.StoredItems = placement.Items;
@@ -494,6 +607,107 @@ public class GameStore
             LootRecovered = run.LootEntries.Where(e => recoveredIds.Contains(e.Id)).Select(e => e.Clone()).ToList(),
             LootLost = run.LootEntries.Where(e => carriedIds.Contains(e.Id) && !recoveredIds.Contains(e.Id)).Select(e => e.Clone()).ToList(),
         };
+    }
+
+    private static bool IsPersistedBaseInventoryItem(InventoryItemRecord item)
+    {
+        if (!ItemData.ById.TryGetValue(item.ItemId, out var definition))
+            return false;
+
+        return definition.Use != null || definition.Category == ItemCategory.Consumable;
+    }
+
+    private static bool IsAllowedDeploymentPackItem(InventoryItemRecord item)
+    {
+        return IsPersistedBaseInventoryItem(item);
+    }
+
+    private static DeploymentReadinessResult BuildDeploymentReadiness(SaveState save)
+    {
+        var map = RouteData.GetMap(save.World.SelectedRouteId);
+        var pack = save.Inventory.DeploymentPack;
+        var result = new DeploymentReadinessResult
+        {
+            HighestThreat = map.Zones.Length > 0 ? map.Zones.Max(zone => zone.ThreatLevel) : 0,
+            CapacityCells = pack.Columns * pack.Rows,
+            OccupiedCells = pack.Items.Sum(item => item.Width * item.Height),
+            StagedUnits = pack.Items.Sum(item => item.Quantity),
+            StatusLabel = "Ready",
+            Detail = "Deployment pack is acceptable for the selected map.",
+            CanDeploy = true,
+        };
+
+        foreach (var item in pack.Items)
+        {
+            if (!ItemData.ById.TryGetValue(item.ItemId, out var definition) || definition.Use == null)
+                continue;
+
+            if (definition.Use.Heals > 0)
+                result.HealingUnits += item.Quantity;
+            if (definition.Use.RefreshDash)
+                result.MobilityUnits += item.Quantity;
+            if (definition.Use.ExplosionDamage > 0)
+                result.UtilityUnits += item.Quantity;
+        }
+
+        if (save.Inventory.EquippedWeaponIds.Count == 0)
+        {
+            result.CanDeploy = false;
+            result.StatusLabel = "Blocked";
+            result.Detail = "At least one weapon must remain equipped before deployment.";
+            return result;
+        }
+
+        if (result.HighestThreat >= 3 && result.HealingUnits <= 0)
+        {
+            result.CanDeploy = false;
+            result.StatusLabel = "Blocked";
+            result.Detail = "High-risk maps require at least one healing consumable in the deployment pack.";
+            return result;
+        }
+
+        if (result.HighestThreat >= 2 && result.StagedUnits <= 0)
+        {
+            result.CanDeploy = false;
+            result.StatusLabel = "Blocked";
+            result.Detail = "Stage at least one consumable before entering medium or high-risk regions.";
+            return result;
+        }
+
+        var warnings = new List<string>();
+        if (result.HighestThreat >= 2 && result.HealingUnits <= 0)
+            warnings.Add("no medical support");
+        if (result.HighestThreat >= 2 && result.MobilityUnits <= 0)
+            warnings.Add("no mobility reserve");
+        if (result.HighestThreat >= 2 && result.UtilityUnits <= 0)
+            warnings.Add("no area-control item");
+        if (result.HighestThreat >= 3 && result.StagedUnits < 2)
+            warnings.Add("payload is very light");
+        if (result.HighestThreat <= 1 && result.StagedUnits <= 0)
+            warnings.Add("deploying with an empty pack");
+
+        if (warnings.Count > 0)
+        {
+            result.HasWarnings = true;
+            result.StatusLabel = "Caution";
+            result.Detail = $"Map is deployable, but {string.Join(", ", warnings)}.";
+        }
+
+        return result;
+    }
+
+    private static bool CanAfford(BaseResources stock, ResourceBundle cost)
+    {
+        return stock.Salvage >= cost.Salvage
+            && stock.Alloy >= cost.Alloy
+            && stock.Research >= cost.Research;
+    }
+
+    private static void SpendResources(BaseResources stock, ResourceBundle cost)
+    {
+        stock.Salvage -= cost.Salvage;
+        stock.Alloy -= cost.Alloy;
+        stock.Research -= cost.Research;
     }
 
     private static ExtractionResult BuildExtractionResult(RunState run, RunResolutionOutcome outcome, string resolvedAt, RunInventorySettlement settlement)
@@ -520,7 +734,7 @@ public class GameStore
     private static string BuildExtractionSummaryLabel(RunResolutionOutcome outcome, string? zoneLabel)
     {
         if (outcome == RunResolutionOutcome.BossClear)
-            return zoneLabel != null ? $"{zoneLabel}已肃清" : "路线已肃清";
+            return zoneLabel != null ? $"{zoneLabel}压制完成" : "地图压制完成";
         if (outcome == RunResolutionOutcome.Down)
             return "行动失败";
         return zoneLabel != null ? $"已从{zoneLabel}撤离" : "成功撤离";
@@ -531,6 +745,34 @@ public class GameStore
         return save.Inventory.EquippedWeaponIds.Count > 0
             ? new List<WeaponType>(save.Inventory.EquippedWeaponIds)
             : new List<WeaponType> { WeaponType.MachineGun, WeaponType.Grenade, WeaponType.Sniper };
+    }
+
+    private static List<InventoryItemRecord> BuildInitialReserveAmmoItems(IEnumerable<WeaponType> loadout)
+    {
+        var records = new List<InventoryItemRecord>();
+        foreach (var weaponId in loadout.Distinct())
+        {
+            if (!WeaponData.ById.TryGetValue(weaponId, out var weapon))
+                continue;
+
+            foreach (var ammo in weapon.AmmoTypes)
+            {
+                if (string.IsNullOrWhiteSpace(ammo.ReserveItemId) || ammo.StartingReserve <= 0)
+                    continue;
+
+                int remaining = ammo.StartingReserve;
+                while (remaining > 0)
+                {
+                    int chunk = Math.Min(60, remaining);
+                    var record = ShotV.Inventory.GridInventory.CreateItemRecord(ammo.ReserveItemId, chunk);
+                    if (record != null)
+                        records.Add(record);
+                    remaining -= chunk;
+                }
+            }
+        }
+
+        return records;
     }
 
     private static string BuildRunId()

@@ -41,8 +41,21 @@ public class GrenadeProjectile
 {
     public Vector2 Start { get; set; }
     public Vector2 End { get; set; }
+    public float Radius { get; set; }
+    public float Damage { get; set; }
+    public int ArmorPenetration { get; set; }
+    public int PierceCount { get; set; }
     public float Age { get; set; }
     public float Duration { get; set; }
+}
+
+public class GrenadeDetonationPayload
+{
+    public Vector2 Position { get; set; }
+    public float Radius { get; set; }
+    public float Damage { get; set; }
+    public int ArmorPenetration { get; set; }
+    public int PierceCount { get; set; }
 }
 
 public class GrenadeExplosion

@@ -10,7 +10,7 @@ public enum HostileType { Melee, Ranged, Charger, Boss }
 
 public enum HostileMode { Advance, Aim, Windup, Charge, Recover }
 
-public enum ItemCategory { Resource, Intel, Boss, Consumable }
+public enum ItemCategory { Resource, Intel, Boss, Consumable, Ammo }
 
 public enum ItemRarity { Common, Uncommon, Rare, Epic, Legendary }
 

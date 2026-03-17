@@ -22,6 +22,22 @@ public class EnemyActor
     public int Phase { get; set; } = 1;
     public BossPattern Pattern { get; set; } = BossPattern.Nova;
     public bool PhaseShifted { get; set; }
+    public float HomeX { get; set; }
+    public float HomeY { get; set; }
+    public string SpawnRegionId { get; set; } = "";
+    public WorldZoneKind SpawnRegionKind { get; set; } = WorldZoneKind.Perimeter;
+    public bool Alerted { get; set; }
+    public float AlertTimer { get; set; }
+    public float LastKnownPlayerX { get; set; }
+    public float LastKnownPlayerY { get; set; }
+    public float PatrolAngle { get; set; }
+    public float PatrolTimer { get; set; }
+    public float PatrolRadius { get; set; } = 46f;
+    public float PatrolCadence { get; set; } = 1.2f;
+    public float AlertRadiusScale { get; set; } = 1f;
+    public float LeashRadiusScale { get; set; } = 1f;
+    public float AlertDuration { get; set; } = 3f;
+    public float SupportAlertRadius { get; set; } = 180f;
 
     // Visual state
     public float DamageFlash { get; set; }

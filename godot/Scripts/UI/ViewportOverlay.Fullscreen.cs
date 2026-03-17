@@ -3,6 +3,7 @@ using System.Linq;
 using Godot;
 using ShotV.Core;
 using ShotV.Data;
+using ShotV.Inventory;
 using ShotV.State;
 using ShotV.World;
 
@@ -29,9 +30,7 @@ public partial class ViewportOverlay
     private Label _panelTitle = null!;
     private Label _panelMeta = null!;
     private HBoxContainer _panelTabs = null!;
-    private HBoxContainer _panelBodyRow = null!;
-    private VBoxContainer _panelSummaryColumn = null!;
-    private VBoxContainer _panelContentColumn = null!;
+    private Control _panelContentContainer = null!;
     private Label _panelFooter = null!;
     private Button _panelPrimaryButton = null!;
     private Button _panelSecondaryButton = null!;
@@ -52,9 +51,8 @@ public partial class ViewportOverlay
             return;
 
         bool compact = GetViewport().GetVisibleRect().Size.X < 1100f;
-        _panelFrame.CustomMinimumSize = new Vector2(compact ? 860f : 980f, 0f);
-        _panelSummaryColumn.CustomMinimumSize = new Vector2(compact ? 220f : 260f, 0f);
-        _panelContentColumn.CustomMinimumSize = new Vector2(compact ? 420f : 560f, 0f);
+        float viewportHeight = GetViewport().GetVisibleRect().Size.Y;
+        _panelFrame.CustomMinimumSize = new Vector2(compact ? 900f : 1100f, Mathf.Min(600f, viewportHeight - 80f));
     }
 
     private void UpdateFullscreenLive()
@@ -65,8 +63,8 @@ public partial class ViewportOverlay
 
         var state = store.State;
         var activeRun = state.Save.Session.ActiveRun;
-        var selectedRoute = RouteData.GetRoute(state.Save.World.SelectedRouteId);
-        var currentRoute = activeRun != null ? RouteData.GetRoute(activeRun.Map.RouteId) : selectedRoute;
+        var selectedRoute = RouteData.GetMap(state.Save.World.SelectedRouteId);
+        var currentRoute = activeRun != null ? RouteData.GetMap(activeRun.Map.RouteId) : selectedRoute;
         var currentZone = activeRun != null ? RouteManager.GetCurrentRunZone(activeRun.Map) : null;
         bool showSettlement = state.Mode == GameMode.Combat && activeRun?.Status == RunStateStatus.AwaitingSettlement;
 
@@ -102,7 +100,7 @@ public partial class ViewportOverlay
             14,
             18,
             14,
-            12));
+            0));
         _root.AddChild(_baseBanner);
 
         var body = new VBoxContainer();
@@ -183,18 +181,33 @@ public partial class ViewportOverlay
 
         _panelFrame = new PanelContainer
         {
-            CustomMinimumSize = new Vector2(980f, 0f),
+            CustomMinimumSize = new Vector2(1100f, 600f),
             MouseFilter = Control.MouseFilterEnum.Stop,
         };
         _panelFrame.AddThemeStyleboxOverride("panel", CreatePanelStyle(
             new Color(1f, 1f, 1f, 0.96f),
-            new Color(Palette.Frame, 0.42f),
+            new Color(Palette.Frame, 0.6f),
             24,
-            22,
             24,
-            20,
-            18));
-        host.AddChild(_panelFrame);
+            24,
+            24,
+            0));
+        
+        var marginHost = new MarginContainer();
+        marginHost.AddThemeConstantOverride("margin_top", 40);
+        marginHost.AddThemeConstantOverride("margin_bottom", 40);
+        marginHost.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+        _panelLayer.AddChild(marginHost);
+        
+        var centerHost = new CenterContainer
+        {
+            MouseFilter = Control.MouseFilterEnum.Ignore,
+        };
+        centerHost.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
+        centerHost.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+        marginHost.AddChild(centerHost);
+
+        centerHost.AddChild(_panelFrame);
 
         var body = new VBoxContainer();
         body.AddThemeConstantOverride("separation", 14);
@@ -222,29 +235,10 @@ public partial class ViewportOverlay
         _panelTabs.AddThemeConstantOverride("separation", 8);
         body.AddChild(_panelTabs);
 
-        _panelBodyRow = new HBoxContainer();
-        _panelBodyRow.AddThemeConstantOverride("separation", 14);
-        body.AddChild(_panelBodyRow);
-
-        _panelSummaryColumn = new VBoxContainer();
-        _panelSummaryColumn.AddThemeConstantOverride("separation", 10);
-        _panelBodyRow.AddChild(_panelSummaryColumn);
-
-        var scroll = new ScrollContainer
-        {
-            HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled,
-            VerticalScrollMode = ScrollContainer.ScrollMode.Auto,
-            MouseFilter = Control.MouseFilterEnum.Stop,
-            CustomMinimumSize = new Vector2(560f, 420f),
-        };
-        scroll.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
-        scroll.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
-        _panelBodyRow.AddChild(scroll);
-
-        _panelContentColumn = new VBoxContainer();
-        _panelContentColumn.AddThemeConstantOverride("separation", 10);
-        _panelContentColumn.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
-        scroll.AddChild(_panelContentColumn);
+        _panelContentContainer = new VBoxContainer();
+        _panelContentContainer.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
+        _panelContentContainer.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+        body.AddChild(_panelContentContainer);
 
         var footerRow = new HBoxContainer();
         footerRow.AddThemeConstantOverride("separation", 10);
@@ -276,7 +270,7 @@ public partial class ViewportOverlay
         _baseBannerTitle.Text = $"BASE CAMP / {selectedRoute.Label}";
         _baseBannerHint.Text = !string.IsNullOrWhiteSpace(state.Runtime.PrimaryActionHint)
             ? state.Runtime.PrimaryActionHint
-            : selectedRoute.Summary;
+            : BuildMapSummary(selectedRoute);
     }
 
     private void RefreshOverviewMap(GameState state, WorldRouteDefinition selectedRoute, WorldRouteDefinition currentRoute, RunZoneState? currentZone, RunState? activeRun, bool showSettlement)
@@ -297,11 +291,11 @@ public partial class ViewportOverlay
         {
             _overviewTitle.Text = $"BASE OVERVIEW / {selectedRoute.Label}";
             _overviewMeta.Text = $"Focus: {focusLabel}\nLegend: player / camera / markers";
-            _overviewHint.Text = "Review station positions, route selection, and launch lane before deployment. Press M to close.";
+            _overviewHint.Text = "Review base stations, map intel, and the launch gate before deployment. Press M to close.";
             return;
         }
 
-        string zoneLabel = currentZone?.Label ?? "Current Zone";
+        string zoneLabel = currentZone?.Label ?? "Current Region";
         int enemyCount = snapshot?.EnemyPositions.Count ?? 0;
         _overviewTitle.Text = $"{currentRoute.Label} / {zoneLabel}";
         _overviewMeta.Text = $"Focus: {focusLabel}\nEnemies: {enemyCount} / Nearby loot: {state.Runtime.NearbyLootCount}";
@@ -325,7 +319,7 @@ public partial class ViewportOverlay
             14,
             16,
             14,
-            12));
+            0));
         return card;
     }
 
@@ -381,7 +375,7 @@ public partial class ViewportOverlay
         {
             ScenePanelMode.Locker => "Locker / Stash",
             ScenePanelMode.Workshop => "Workshop / Loadout",
-            ScenePanelMode.Command => "Command / Routes",
+            ScenePanelMode.Command => "Command / Map Intel",
             ScenePanelMode.Launch => "Launch / Deploy",
             ScenePanelMode.CombatInventory => "Combat Pack / Loot",
             _ => state.Mode == GameMode.Base ? "Base Overview" : "Mission Overview",
@@ -390,11 +384,11 @@ public partial class ViewportOverlay
         _panelMeta.Text = mode switch
         {
             ScenePanelMode.CombatInventory when activeRun != null => $"{currentRoute.Label} / {currentZone?.Label ?? activeRun.Map.CurrentZoneId}",
-            ScenePanelMode.Command => $"Selected route: {selectedRoute.Label}",
-            ScenePanelMode.Workshop => "Loadout order is mirrored to weapon slots 1 / 2 / 3.",
+            ScenePanelMode.Command => $"Selected map: {selectedRoute.Label}",
+            ScenePanelMode.Workshop => "Loadout order is mirrored to weapon slots 1 / 2 / 3. Fabricated consumables are stored in the stash.",
             ScenePanelMode.Locker => $"Stored items: {state.Save.Inventory.StoredItems.Count}",
-            ScenePanelMode.Launch => $"Deployment target: {selectedRoute.Label}",
-            _ => state.Mode == GameMode.Base ? selectedRoute.Summary : BuildSceneHint(state),
+            ScenePanelMode.Launch => $"Deployment target: {selectedRoute.Label} / staged items: {state.Save.Inventory.DeploymentPack.Items.Count}",
+            _ => state.Mode == GameMode.Base ? BuildMapSummary(selectedRoute) : BuildSceneHint(state),
         };
     }
 
@@ -422,33 +416,11 @@ public partial class ViewportOverlay
             return;
 
         ResetInteractiveWidgetRefs();
-        ClearChildren(_panelSummaryColumn);
-        ClearChildren(_panelContentColumn);
+        ClearChildren(_panelContentContainer);
 
-        BuildSummaryCards(state, selectedRoute, currentRoute, currentZone, activeRun);
         BuildContentCards(state, selectedRoute, currentRoute, currentZone, activeRun, mode);
 
         _panelContentKey = key;
-    }
-
-    private void BuildSummaryCards(GameState state, WorldRouteDefinition selectedRoute, WorldRouteDefinition currentRoute, RunZoneState? currentZone, RunState? activeRun)
-    {
-        if (state.Mode == GameMode.Base)
-        {
-            AddSummaryCard("Resources", FormatBaseResources(state.Save.Base.Resources));
-            AddSummaryCard("Route", $"{selectedRoute.Label}\nZones: {selectedRoute.Zones.Length}");
-            AddSummaryCard("Loadout", FormatLoadout(state.Save.Inventory.EquippedWeaponIds));
-            AddSummaryCard("Stash", $"Items: {state.Save.Inventory.StoredItems.Count}\nDiscovered zones: {state.Save.World.DiscoveredZones.Count}");
-            return;
-        }
-
-        if (activeRun == null)
-            return;
-
-        AddSummaryCard("Resources", FormatResourceBundle(activeRun.Resources, "No carried resources"));
-        AddSummaryCard("Zone", $"{currentRoute.Label}\n{currentZone?.Label ?? activeRun.Map.CurrentZoneId}");
-        AddSummaryCard("Loadout", FormatLoadout(activeRun.Player.LoadoutWeaponIds));
-        AddSummaryCard("Runtime", $"Kills: {activeRun.Stats.Kills}\nNearby loot: {state.Runtime.NearbyLootCount}");
     }
 
     private void BuildContentCards(GameState state, WorldRouteDefinition selectedRoute, WorldRouteDefinition currentRoute, RunZoneState? currentZone, RunState? activeRun, ScenePanelMode mode)
@@ -459,13 +431,13 @@ public partial class ViewportOverlay
                 BuildLockerPanel(state.Save.Inventory);
                 break;
             case ScenePanelMode.Workshop:
-                BuildWorkshopPanel(state.Save.Inventory);
+                BuildWorkshopPanel(state);
                 break;
             case ScenePanelMode.Command:
                 BuildCommandPanel(state.Save.World.SelectedRouteId);
                 break;
             case ScenePanelMode.Launch:
-                BuildLaunchPanel(state, selectedRoute);
+                BuildLaunchPanel(state, selectedRoute, state.Runtime.PrimaryActionReady);
                 break;
             case ScenePanelMode.CombatInventory:
                 if (activeRun != null)
@@ -479,31 +451,88 @@ public partial class ViewportOverlay
 
     private void BuildOverviewPanel(GameState state, WorldRouteDefinition selectedRoute, WorldRouteDefinition currentRoute, RunZoneState? currentZone, RunState? activeRun)
     {
+        var split = new HBoxContainer();
+        split.AddThemeConstantOverride("separation", 24);
+        split.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
+        _panelContentContainer.AddChild(split);
+
+        var leftCol = new VBoxContainer();
+        leftCol.AddThemeConstantOverride("separation", 12);
+        leftCol.CustomMinimumSize = new Vector2(300f, 0f);
+        split.AddChild(leftCol);
+
+        var rightCol = new VBoxContainer();
+        rightCol.AddThemeConstantOverride("separation", 12);
+        rightCol.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+        split.AddChild(rightCol);
+
         if (state.Mode == GameMode.Base)
         {
-            AddContentCard("Deployment target", selectedRoute.Label, selectedRoute.Summary);
-            AddContentCard("Current stash", $"Stored items: {state.Save.Inventory.StoredItems.Count}", "Open Locker for item details and auto-arrange.");
-            AddContentCard("Workshop", FormatLoadout(state.Save.Inventory.EquippedWeaponIds), "Open Workshop to reorder the loadout used by weapon slots.");
+            AddCardTo(leftCol, "Resources", FormatBaseResources(state.Save.Base.Resources), string.Empty);
+            AddCardTo(leftCol, "Map", $"{selectedRoute.Label}\nRegions: {selectedRoute.Zones.Length}", string.Empty);
+            AddCardTo(leftCol, "Stash", $"Items: {state.Save.Inventory.StoredItems.Count}\nKnown regions: {state.Save.World.DiscoveredZones.Count}", string.Empty);
+
+            AddCardTo(rightCol, "Selected map", selectedRoute.Label, BuildMapSummary(selectedRoute));
+            AddCardTo(rightCol, "Current stash", $"Stored items: {state.Save.Inventory.StoredItems.Count}", "Open Locker for item details and auto-arrange.");
+            AddCardTo(rightCol, "Workshop", FormatLoadout(state.Save.Inventory.EquippedWeaponIds), "Open Workshop to reorder the loadout used by weapon slots.");
             if (state.Save.Session.LastExtraction != null)
-                AddContentCard("Last extraction", FormatOutcome(state.Save.Session.LastExtraction.Outcome), state.Save.Session.LastExtraction.SummaryLabel);
+                AddCardTo(rightCol, "Last extraction", FormatOutcome(state.Save.Session.LastExtraction.Outcome), state.Save.Session.LastExtraction.SummaryLabel);
             return;
         }
 
         if (activeRun == null)
             return;
 
-        AddContentCard("AO", $"{currentRoute.Label} / {currentZone?.Label ?? activeRun.Map.CurrentZoneId}", currentZone?.Description ?? "Mission is active.");
-        AddContentCard("Pack", $"Items carried: {activeRun.Inventory.Items.Count}", $"Quick slots: {FormatQuickSlots(activeRun.Inventory)}");
-        AddContentCard("Loot", $"Ground loot: {activeRun.GroundLoot.Count}", $"Nearby pickups: {state.Runtime.NearbyLootCount}");
+        AddCardTo(leftCol, "Resources", FormatResourceBundle(activeRun.Resources, "No carried resources"), string.Empty);
+        AddCardTo(leftCol, "Region", $"{currentRoute.Label}\n{currentZone?.Label ?? activeRun.Map.CurrentZoneId}", string.Empty);
+        AddCardTo(leftCol, "Loadout", FormatLoadout(activeRun.Player.LoadoutWeaponIds), string.Empty);
+        AddCardTo(leftCol, "Runtime", $"Kills: {activeRun.Stats.Kills}\nNearby loot: {state.Runtime.NearbyLootCount}", string.Empty);
+
+        AddCardTo(rightCol, "AO", $"{currentRoute.Label} / {currentZone?.Label ?? activeRun.Map.CurrentZoneId}", currentZone?.Description ?? "Open-world combat is active.");
+        AddCardTo(rightCol, "Pack", $"Items carried: {activeRun.Inventory.Items.Count}", $"Quick slots: {FormatQuickSlots(activeRun.Inventory)}");
+        AddCardTo(rightCol, "Loot", $"Ground loot: {activeRun.GroundLoot.Count}", $"Nearby pickups: {state.Runtime.NearbyLootCount}");
     }
 
     private void BuildLockerPanel(InventoryState inventory)
     {
-        BuildLockerInventoryContent(inventory);
+        var split = new HBoxContainer();
+        split.AddThemeConstantOverride("separation", 24);
+        split.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
+        _panelContentContainer.AddChild(split);
+
+        var infoCol = new VBoxContainer();
+        infoCol.AddThemeConstantOverride("separation", 12);
+        infoCol.CustomMinimumSize = new Vector2(300f, 0f);
+        split.AddChild(infoCol);
+
+        var contentCol = new VBoxContainer();
+        contentCol.AddThemeConstantOverride("separation", 12);
+        contentCol.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+        split.AddChild(contentCol);
+
+        AddCardTo(infoCol, "Stash Information", $"Stored items: {inventory.StoredItems.Count}", "The base locker is used to store components, salvage, and fabrication materials.");
+        
+        BuildLockerInventoryContent(contentCol, inventory);
     }
 
-    private void BuildWorkshopPanel(InventoryState inventory)
+    private void BuildWorkshopPanel(GameState state)
     {
+        var inventory = state.Save.Inventory;
+
+        var split = new HBoxContainer();
+        split.AddThemeConstantOverride("separation", 24);
+        split.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
+        _panelContentContainer.AddChild(split);
+
+        var weaponsCol = new VBoxContainer();
+        weaponsCol.AddThemeConstantOverride("separation", 12);
+        weaponsCol.CustomMinimumSize = new Vector2(340f, 0f);
+        split.AddChild(weaponsCol);
+
+        var header = CreateLabel(14, Palette.UiText, true, 0.4f, false);
+        header.Text = "Loadout Configuration";
+        weaponsCol.AddChild(header);
+
         for (int index = 0; index < inventory.EquippedWeaponIds.Count; index++)
         {
             int weaponIndex = index;
@@ -524,39 +553,160 @@ public partial class ViewportOverlay
             downButton.Pressed += () => GameManager.Instance?.Store?.MoveEquippedWeapon(weaponIndex, weaponIndex + 1);
             actionRow.AddChild(downButton);
 
-            _panelContentColumn.AddChild(card);
+            weaponsCol.AddChild(card);
+        }
+
+        var fabCol = new VBoxContainer();
+        fabCol.AddThemeConstantOverride("separation", 12);
+        fabCol.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+        split.AddChild(fabCol);
+
+        var fabHeader = CreateLabel(14, Palette.UiText, true, 0.4f, false);
+        fabHeader.Text = "Fabrication";
+        fabCol.AddChild(fabHeader);
+
+        var fabScroll = new ScrollContainer
+        {
+            HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled,
+            VerticalScrollMode = ScrollContainer.ScrollMode.Auto,
+            SizeFlagsVertical = Control.SizeFlags.ExpandFill
+        };
+        fabCol.AddChild(fabScroll);
+
+        var fabList = new VBoxContainer();
+        fabList.AddThemeConstantOverride("separation", 10);
+        fabList.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+        fabScroll.AddChild(fabList);
+
+        foreach (var definition in ItemData.Catalog.Where(item => item.CraftCost != null))
+        {
+            var card = CreateContentCard("Blueprint", definition.Label, definition.Description);
+            var body = card.GetChild<VBoxContainer>(0);
+
+            var costLabel = CreateLabel(12, Palette.UiMuted, false, 0.2f, true);
+            costLabel.Text = $"Cost: {FormatCompactResourceBundle(definition.CraftCost!)}";
+            body.AddChild(costLabel);
+
+            int stashCount = CountStoredQuantity(inventory.StoredItems, definition.Id);
+            var stockLabel = CreateLabel(12, Palette.UiMuted, false, 0.2f, true);
+            stockLabel.Text = $"In stash: {stashCount}";
+            body.AddChild(stockLabel);
+
+            bool canCraft = CanCraftWorkshopItem(state, definition);
+            var statusLabel = CreateLabel(12, canCraft ? Palette.Accent : Palette.UiMuted, false, 0.2f, true);
+            statusLabel.Text = canCraft
+                ? "Ready to fabricate into the base stash."
+                : ResolveWorkshopCraftBlocker(state, definition);
+            body.AddChild(statusLabel);
+
+            var craftButton = CreateSmallButton(canCraft ? "Fabricate" : "Unavailable", canCraft);
+            craftButton.Pressed += () => GameManager.Instance?.Store?.CraftWorkshopItem(definition.Id);
+            body.AddChild(craftButton);
+
+            fabList.AddChild(card);
         }
     }
 
     private void BuildCommandPanel(string selectedRouteId)
     {
-        foreach (var route in RouteData.Routes)
+        var scroll = new ScrollContainer
         {
-            var card = CreateContentCard("Route", route.Label, route.Summary);
+            HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled,
+            VerticalScrollMode = ScrollContainer.ScrollMode.Auto,
+            SizeFlagsVertical = Control.SizeFlags.ExpandFill,
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill
+        };
+        _panelContentContainer.AddChild(scroll);
+
+        var list = new VBoxContainer();
+        list.AddThemeConstantOverride("separation", 12);
+        list.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+        scroll.AddChild(list);
+
+        foreach (var route in RouteData.Maps)
+        {
+            int extractionCount = route.Zones.Count(zone => zone.AllowsExtraction);
+            int highestThreat = route.Zones.Length > 0 ? route.Zones.Max(zone => zone.ThreatLevel) : 0;
+            var card = CreateContentCard("Map", route.Label, BuildMapSummary(route));
             var body = card.GetChild<VBoxContainer>(0);
 
-            var zonesLabel = CreateLabel(12, Palette.UiMuted, false, 0.2f, true);
-            zonesLabel.Text = string.Join(" / ", route.Zones.Select(zone => zone.Label));
-            body.AddChild(zonesLabel);
+            var pressureLabel = CreateLabel(12, Palette.UiMuted, false, 0.2f, true);
+            pressureLabel.Text = $"Regions {route.Zones.Length} / Highest threat {highestThreat} / Extraction points {extractionCount}";
+            body.AddChild(pressureLabel);
 
-            var button = CreateSmallButton(route.Id == selectedRouteId ? "Selected" : "Select Route", route.Id != selectedRouteId);
-            button.Pressed += () => GameManager.Instance?.Store?.SelectWorldRoute(route.Id);
+            var supplyLabel = CreateLabel(12, Palette.UiMuted, false, 0.2f, true);
+            supplyLabel.Text = BuildMapSupplyAdvice(route);
+            body.AddChild(supplyLabel);
+
+            foreach (var zone in route.Zones)
+            {
+                var regionLabel = CreateLabel(12, Palette.UiText, false, 0.1f, true);
+                regionLabel.Text = BuildRegionIntelLine(zone);
+                body.AddChild(regionLabel);
+            }
+
+            var button = CreateSmallButton(route.Id == selectedRouteId ? "Selected" : "Select Map", route.Id != selectedRouteId);
+            button.Pressed += () => GameManager.Instance?.Store?.SelectWorldMap(route.Id);
             body.AddChild(button);
 
-            _panelContentColumn.AddChild(card);
+            list.AddChild(card);
         }
     }
 
-    private void BuildLaunchPanel(GameState state, WorldRouteDefinition selectedRoute)
+    private void BuildLaunchPanel(GameState state, WorldRouteDefinition selectedRoute, bool deploymentReady)
     {
-        AddContentCard("Selected route", selectedRoute.Label, selectedRoute.Summary);
-        AddContentCard("Loadout", FormatLoadout(state.Save.Inventory.EquippedWeaponIds), "This order is mirrored to combat weapon slots.");
-        AddContentCard("Deploy state", state.Runtime.PrimaryActionReady ? "Launch gate ready" : "Move to launch gate", "Primary action on the right-side dock still works.");
+        var inventory = state.Save.Inventory;
+        var readiness = GameManager.Instance?.Store?.EvaluateDeploymentReadiness() ?? new DeploymentReadinessResult
+        {
+            CanDeploy = true,
+            StatusLabel = "Ready",
+            Detail = "Deployment pack is acceptable for the selected map.",
+            CapacityCells = inventory.DeploymentPack.Columns * inventory.DeploymentPack.Rows,
+        };
+
+        var topScroll = new ScrollContainer
+        {
+            HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled,
+            VerticalScrollMode = ScrollContainer.ScrollMode.Auto,
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+            SizeFlagsVertical = Control.SizeFlags.Fill,
+            CustomMinimumSize = new Vector2(0, 130f)
+        };
+        _panelContentContainer.AddChild(topScroll);
+
+        var topList = new VBoxContainer();
+        topList.AddThemeConstantOverride("separation", 12);
+        topList.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+        topScroll.AddChild(topList);
+
+        var infoGrid = new GridContainer
+        {
+            Columns = 2,
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+        };
+        infoGrid.AddThemeConstantOverride("h_separation", 12);
+        infoGrid.AddThemeConstantOverride("v_separation", 12);
+        topList.AddChild(infoGrid);
+
+        AddCardTo(infoGrid, "Selected map", selectedRoute.Label, BuildMapSummary(selectedRoute));
+        AddCardTo(infoGrid, "Regional pressure", $"Highest threat {readiness.HighestThreat} / Regions {selectedRoute.Zones.Length}", readiness.HighestThreat >= 3
+            ? "High-risk map: medical support is mandatory before deployment."
+            : "Lower-risk map: empty deployment packs are still allowed, but not recommended.");
+        AddCardTo(infoGrid, "Deployment status", readiness.StatusLabel, readiness.Detail);
+        AddCardTo(infoGrid, "Pack summary",
+            $"Units {readiness.StagedUnits} / Cells {readiness.OccupiedCells}/{Mathf.Max(1, readiness.CapacityCells)}",
+            $"Heal {readiness.HealingUnits} / Mobility {readiness.MobilityUnits} / Utility {readiness.UtilityUnits}");
+
+        var packLabel = CreateLabel(14, Palette.UiText, true, 0.4f, false);
+        packLabel.Text = "Deployment Pack";
+        _panelContentContainer.AddChild(packLabel);
+
+        BuildLaunchInventoryContent(_panelContentContainer, inventory);
     }
 
     private void BuildCombatInventoryPanel(RunState activeRun, WorldRouteDefinition currentRoute, RunZoneState? currentZone)
     {
-        AddContentCard("Route", $"{currentRoute.Label} / {currentZone?.Label ?? activeRun.Map.CurrentZoneId}", currentZone?.Description ?? "Combat is active.");
+        AddContentCard("Region", $"{currentRoute.Label} / {currentZone?.Label ?? activeRun.Map.CurrentZoneId}", currentZone?.Description ?? "Combat is active.");
         BuildCombatInventoryContent(activeRun);
     }
 
@@ -577,12 +727,13 @@ public partial class ViewportOverlay
                 _panelPrimaryButton.Disabled = state.Save.Inventory.EquippedWeaponIds.Count < 2;
                 break;
             case ScenePanelMode.Command:
-                _panelPrimaryButton.Text = "Next Route";
+                _panelPrimaryButton.Text = "Cycle Map";
                 _panelPrimaryButton.Disabled = false;
                 break;
             case ScenePanelMode.Launch:
                 _panelPrimaryButton.Text = "Deploy";
-                _panelPrimaryButton.Disabled = !state.Runtime.PrimaryActionReady;
+                _panelPrimaryButton.Disabled = !state.Runtime.PrimaryActionReady
+                    || !(GameManager.Instance?.Store?.EvaluateDeploymentReadiness().CanDeploy ?? true);
                 break;
             case ScenePanelMode.CombatInventory:
                 _panelPrimaryButton.Text = "Sort Pack";
@@ -614,7 +765,7 @@ public partial class ViewportOverlay
                     store.MoveEquippedWeapon(0, state.Save.Inventory.EquippedWeaponIds.Count - 1);
                 break;
             case ScenePanelMode.Command:
-                store.SelectNextWorldRoute();
+                store.SelectNextWorldMap();
                 break;
             case ScenePanelMode.Launch:
                 if (state.Runtime.PrimaryActionReady)
@@ -644,14 +795,14 @@ public partial class ViewportOverlay
         GameManager.Instance?.Store?.CloseScenePanel();
     }
 
-    private void AddSummaryCard(string title, string value)
+    private void AddCardTo(Control parent, string title, string value, string meta)
     {
-        _panelSummaryColumn.AddChild(CreateContentCard(title, value, string.Empty));
+        parent.AddChild(CreateContentCard(title, value, meta));
     }
 
     private void AddContentCard(string title, string value, string meta)
     {
-        _panelContentColumn.AddChild(CreateContentCard(title, value, meta));
+        _panelContentContainer.AddChild(CreateContentCard(title, value, meta));
     }
 
     private PanelContainer CreateContentCard(string title, string value, string meta)
@@ -659,6 +810,7 @@ public partial class ViewportOverlay
         var card = new PanelContainer
         {
             MouseFilter = Control.MouseFilterEnum.Ignore,
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
         };
         card.AddThemeStyleboxOverride("panel", CreatePanelStyle(
             new Color(Palette.WorldFloorDeep, 0.7f),
@@ -667,7 +819,7 @@ public partial class ViewportOverlay
             14,
             16,
             14,
-            10));
+            0));
 
         var body = new VBoxContainer();
         body.AddThemeConstantOverride("separation", 6);
@@ -740,7 +892,7 @@ public partial class ViewportOverlay
             yield return (ScenePanelMode.Overview, "Overview");
             yield return (ScenePanelMode.Locker, "Locker");
             yield return (ScenePanelMode.Workshop, "Workshop");
-            yield return (ScenePanelMode.Command, "Command");
+            yield return (ScenePanelMode.Command, "Intel");
             yield return (ScenePanelMode.Launch, "Launch");
             yield break;
         }
@@ -752,7 +904,7 @@ public partial class ViewportOverlay
     {
         var activeRun = state.Save.Session.ActiveRun;
         string inventoryKey = activeRun == null
-            ? string.Join(",", state.Save.Inventory.StoredItems.Select(item => $"{item.ItemId}:{item.Quantity}:{item.X}:{item.Y}:{item.Rotated}"))
+            ? $"{string.Join(",", state.Save.Inventory.StoredItems.Select(item => $"{item.ItemId}:{item.Quantity}:{item.X}:{item.Y}:{item.Rotated}"))}|{string.Join(",", state.Save.Inventory.DeploymentPack.Items.Select(item => $"{item.ItemId}:{item.Quantity}:{item.X}:{item.Y}:{item.Rotated}"))}"
             : string.Join(",", activeRun.Inventory.Items.Select(item => $"{item.ItemId}:{item.Quantity}:{item.X}:{item.Y}:{item.Rotated}"));
         string loadoutKey = string.Join(",", activeRun?.Player.LoadoutWeaponIds ?? state.Save.Inventory.EquippedWeaponIds);
         string lootKey = activeRun == null ? string.Empty : string.Join(",", activeRun.GroundLoot.Select(drop => $"{drop.Item.ItemId}:{drop.X:0}:{drop.Y:0}"));
@@ -802,6 +954,128 @@ public partial class ViewportOverlay
             return "No base stock";
 
         return $"Scrap {resources.Salvage} / Alloy {resources.Alloy} / Research {resources.Research}";
+    }
+
+    private static string FormatCompactResourceBundle(ResourceBundle bundle)
+    {
+        var parts = new List<string>(3);
+        if (bundle.Salvage > 0)
+            parts.Add($"Scrap {bundle.Salvage}");
+        if (bundle.Alloy > 0)
+            parts.Add($"Alloy {bundle.Alloy}");
+        if (bundle.Research > 0)
+            parts.Add($"Research {bundle.Research}");
+        return parts.Count > 0 ? string.Join(" / ", parts) : "No cost";
+    }
+
+    private static string BuildRegionIntelLine(WorldRouteZoneDefinition zone)
+    {
+        string extraction = zone.AllowsExtraction ? "Extractable" : "No extraction";
+        return $"T{zone.ThreatLevel} / {DescribeZoneKind(zone.Kind)} / {zone.Label} / {DescribeRegionPressure(zone)} / {DescribeRegionLootBias(zone)} / {extraction}";
+    }
+
+    private static string BuildMapSupplyAdvice(WorldRouteDefinition route)
+    {
+        int highestThreat = route.Zones.Length > 0 ? route.Zones.Max(zone => zone.ThreatLevel) : 0;
+        return highestThreat switch
+        {
+            >= 3 => "Suggested pack: at least one medical item, one mobility tool, and one area-control consumable.",
+            2 => "Suggested pack: bring one healing item and one flexible utility consumable before entering deeper regions.",
+            _ => "Suggested pack: light supplies are acceptable, but staging a fallback heal is still safer.",
+        };
+    }
+
+    private static string BuildMapSummary(WorldRouteDefinition route)
+    {
+        int highestThreat = route.Zones.Length > 0 ? route.Zones.Max(zone => zone.ThreatLevel) : 0;
+        int extractionCount = route.Zones.Count(zone => zone.AllowsExtraction);
+        return $"Open map / Regions {route.Zones.Length} / Highest threat {highestThreat} / Extractions {extractionCount}";
+    }
+
+    private static string DescribeZoneKind(WorldZoneKind kind)
+    {
+        return kind switch
+        {
+            WorldZoneKind.Perimeter => "Perimeter",
+            WorldZoneKind.HighRisk => "High Risk",
+            WorldZoneKind.HighValue => "High Value",
+            WorldZoneKind.Extraction => "Extraction",
+            _ => "Open Region",
+        };
+    }
+
+    private static string DescribeRegionPressure(WorldRouteZoneDefinition zone)
+    {
+        return zone.Kind switch
+        {
+            WorldZoneKind.HighRisk when zone.ThreatLevel >= 3 => "dense chargers",
+            WorldZoneKind.HighRisk => "dense mixed hostiles",
+            WorldZoneKind.HighValue => "ranged watchers",
+            WorldZoneKind.Extraction => "contested exit",
+            _ => "light patrols",
+        };
+    }
+
+    private static string DescribeRegionLootBias(WorldRouteZoneDefinition zone)
+    {
+        return zone.Kind switch
+        {
+            WorldZoneKind.HighRisk => "alloy-heavy recovery",
+            WorldZoneKind.HighValue => "research-heavy recovery",
+            WorldZoneKind.Extraction => "utility cache chance",
+            _ => "salvage and meds",
+        };
+    }
+
+    private static int CountStoredQuantity(IEnumerable<InventoryItemRecord> items, string itemId)
+    {
+        return items.Where(item => item.ItemId == itemId).Sum(item => item.Quantity);
+    }
+
+    private static bool CanCraftWorkshopItem(GameState state, ItemDefinition definition)
+    {
+        if (definition.CraftCost == null)
+            return false;
+
+        var stock = state.Save.Base.Resources;
+        if (stock.Salvage < definition.CraftCost.Salvage
+            || stock.Alloy < definition.CraftCost.Alloy
+            || stock.Research < definition.CraftCost.Research)
+            return false;
+
+        var preview = GridInventory.CreateItemRecord(definition.Id, 1);
+        if (preview == null)
+            return false;
+
+        return GridInventory.PlaceItemInGrid(
+            state.Save.Inventory.StashColumns,
+            state.Save.Inventory.StashRows,
+            state.Save.Inventory.StoredItems,
+            preview).Placed;
+    }
+
+    private static string ResolveWorkshopCraftBlocker(GameState state, ItemDefinition definition)
+    {
+        if (definition.CraftCost == null)
+            return "No fabrication recipe.";
+
+        var stock = state.Save.Base.Resources;
+        if (stock.Salvage < definition.CraftCost.Salvage
+            || stock.Alloy < definition.CraftCost.Alloy
+            || stock.Research < definition.CraftCost.Research)
+            return "Insufficient base resources.";
+
+        var preview = GridInventory.CreateItemRecord(definition.Id, 1);
+        if (preview == null)
+            return "Recipe data is invalid.";
+
+        bool hasSpace = GridInventory.PlaceItemInGrid(
+            state.Save.Inventory.StashColumns,
+            state.Save.Inventory.StashRows,
+            state.Save.Inventory.StoredItems,
+            preview).Placed;
+
+        return hasSpace ? "Unavailable." : "Base stash is full.";
     }
 
     private static void ClearChildren(Node node)

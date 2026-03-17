@@ -3,6 +3,7 @@ using System.Linq;
 using Godot;
 using ShotV.Core;
 using ShotV.Data;
+using ShotV.Inventory;
 using ShotV.State;
 
 namespace ShotV.UI;
@@ -42,6 +43,9 @@ public partial class HUD : Control
     private float _hintTimer;
     private List<WeaponDefinition> _loadout = WeaponData.Loadout.ToList();
     private WeaponType _activeWeaponId = WeaponType.MachineGun;
+    private readonly Dictionary<WeaponType, WeaponHudState> _weaponRuntime = new();
+    private WeaponType? _reloadWeaponId;
+    private float _reloadProgress;
 
     public override void _Ready()
     {
@@ -82,15 +86,36 @@ public partial class HUD : Control
         RefreshWeaponStrip();
     }
 
+    public void UpdateWeaponRuntime(PlayerRunState player, GridInventoryState inventory, WeaponType? reloadWeaponId, float reloadProgress)
+    {
+        _weaponRuntime.Clear();
+        player.EnsureWeaponStates();
+        foreach (var state in player.WeaponStates)
+        {
+            if (!WeaponData.ById.TryGetValue(state.WeaponId, out var weapon))
+                continue;
+
+            var ammo = WeaponData.GetAmmo(weapon, state.AmmoTypeId);
+            int reserve = string.IsNullOrWhiteSpace(ammo.ReserveItemId)
+                ? 0
+                : GridInventory.CountItemQuantity(inventory.Items, ammo.ReserveItemId);
+            _weaponRuntime[state.WeaponId] = new WeaponHudState(state.Magazine, state.MagazineCapacity, reserve, ammo.Label);
+        }
+
+        _reloadWeaponId = reloadWeaponId;
+        _reloadProgress = Mathf.Clamp(reloadProgress, 0f, 1f);
+        RefreshWeaponStrip();
+    }
+
     public void UpdateWave(int wave, int kills)
     {
-        int displayWave = Mathf.Max(1, wave);
-        _waveLabel.Text = $"波次 {displayWave:00} / 击杀 {kills}";
+        int displayThreat = Mathf.Max(1, wave);
+        _waveLabel.Text = $"区域威胁 {displayThreat:00} / 击杀 {kills}";
     }
 
     public void UpdateEnemyStatus(int activeEnemies, int pendingSpawns)
     {
-        _enemyLabel.Text = $"活动目标 {activeEnemies} / 待增援 {pendingSpawns}";
+        _enemyLabel.Text = $"活动目标 {activeEnemies} / 刷新压力 {pendingSpawns}";
     }
 
     public void UpdateQuickSlots(GridInventoryState inventory)
@@ -338,6 +363,24 @@ public partial class HUD : Control
                 16,
                 10));
         }
+
+        ApplyWeaponRuntimeLabelOverrides();
+    }
+
+    private void ApplyWeaponRuntimeLabelOverrides()
+    {
+        for (int index = 0; index < _weaponLabels.Count; index++)
+        {
+            WeaponDefinition? weapon = index < _loadout.Count ? _loadout[index] : null;
+            if (weapon == null || !_weaponRuntime.TryGetValue(weapon.Id, out var runtime))
+                continue;
+
+            string labelText = $"{index + 1}  {weapon.Label} {runtime.Magazine}/{runtime.MagazineCapacity}+{runtime.Reserve} [{runtime.AmmoLabel}]";
+            if (_reloadWeaponId == weapon.Id)
+                labelText += $" RELOAD {Mathf.RoundToInt(_reloadProgress * 100f)}%";
+
+            _weaponLabels[index].Text = labelText;
+        }
     }
 
     private static PanelContainer CreatePanel(Rect2 rect)
@@ -390,10 +433,10 @@ public partial class HUD : Control
         {
             BgColor = background,
             BorderColor = border,
-            CornerRadiusTopLeft = 10,
-            CornerRadiusTopRight = 10,
-            CornerRadiusBottomRight = 10,
-            CornerRadiusBottomLeft = 10,
+            CornerRadiusTopLeft = 0,
+            CornerRadiusTopRight = 0,
+            CornerRadiusBottomRight = 0,
+            CornerRadiusBottomLeft = 0,
             ContentMarginLeft = horizontalPadding,
             ContentMarginTop = verticalPadding,
             ContentMarginRight = horizontalPadding,
@@ -408,11 +451,27 @@ public partial class HUD : Control
         var style = new StyleBoxFlat
         {
             BgColor = color,
-            CornerRadiusTopLeft = 4,
-            CornerRadiusTopRight = 4,
-            CornerRadiusBottomRight = 4,
-            CornerRadiusBottomLeft = 4,
+            CornerRadiusTopLeft = 0,
+            CornerRadiusTopRight = 0,
+            CornerRadiusBottomRight = 0,
+            CornerRadiusBottomLeft = 0,
         };
         return style;
+    }
+
+    private readonly struct WeaponHudState
+    {
+        public WeaponHudState(int magazine, int magazineCapacity, int reserve, string ammoLabel)
+        {
+            Magazine = magazine;
+            MagazineCapacity = magazineCapacity;
+            Reserve = reserve;
+            AmmoLabel = ammoLabel;
+        }
+
+        public int Magazine { get; }
+        public int MagazineCapacity { get; }
+        public int Reserve { get; }
+        public string AmmoLabel { get; }
     }
 }

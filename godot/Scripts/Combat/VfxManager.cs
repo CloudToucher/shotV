@@ -41,11 +41,18 @@ public partial class VfxManager : Node2D
         });
     }
 
-    public void SpawnGrenade(Vector2 start, Vector2 end, float duration = 0.34f)
+    public void SpawnGrenade(Vector2 start, Vector2 end, float radius, float damage, int armorPenetration, int pierceCount, float duration = 0.34f)
     {
         _grenades.Add(new GrenadeProjectile
         {
-            Start = start, End = end, Age = 0f, Duration = duration,
+            Start = start,
+            End = end,
+            Radius = radius,
+            Damage = damage,
+            ArmorPenetration = armorPenetration,
+            PierceCount = pierceCount,
+            Age = 0f,
+            Duration = duration,
         });
     }
 
@@ -114,7 +121,7 @@ public partial class VfxManager : Node2D
     }
 
     // Called by grenade projectile completion
-    public event Action<Vector2>? GrenadeDetonated;
+    public event Action<GrenadeDetonationPayload>? GrenadeDetonated;
 
     public override void _Draw()
     {
@@ -145,10 +152,17 @@ public partial class VfxManager : Node2D
             {
                 var g = _grenades[i];
                 _grenades.RemoveAt(i);
-                SpawnExplosion(g.End, WeaponData.Grenade.SplashRadius);
-                SpawnRing(g.End.X, g.End.Y, 12, WeaponData.Grenade.SplashRadius * 1.2f, 0.28f, Palette.Accent, 3.5f);
+                SpawnExplosion(g.End, g.Radius);
+                SpawnRing(g.End.X, g.End.Y, 12, g.Radius * 1.2f, 0.28f, Palette.Accent, 3.5f);
                 SpawnParticles(g.End.X, g.End.Y, 18, Palette.AccentSoft);
-                GrenadeDetonated?.Invoke(g.End);
+                GrenadeDetonated?.Invoke(new GrenadeDetonationPayload
+                {
+                    Position = g.End,
+                    Radius = g.Radius,
+                    Damage = g.Damage,
+                    ArmorPenetration = g.ArmorPenetration,
+                    PierceCount = g.PierceCount,
+                });
             }
         }
     }

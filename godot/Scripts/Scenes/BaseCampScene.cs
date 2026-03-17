@@ -53,9 +53,7 @@ public partial class BaseCampScene : Node2D, IOverlaySceneDataProvider
         _player.SetMoveIntent(fullscreenUi ? 0f : moveIntent.X, fullscreenUi ? 0f : moveIntent.Y);
 
         var mousePos = GetGlobalMousePosition();
-        var playerPos = _player.PlayerPosition;
-        float aimAngle = Mathf.Atan2(mousePos.Y - playerPos.Y, mousePos.X - playerPos.X);
-        _player.SetAimAngle(aimAngle);
+        _player.SetAimTarget(mousePos);
 
         _player.UpdatePhysics(dt, _layout.Bounds, _layout.Obstacles);
         _camera.Position = _camera.Position.Lerp(_player.PlayerPosition, Mathf.Min(1f, 6f * dt));
@@ -171,7 +169,7 @@ public partial class BaseCampScene : Node2D, IOverlaySceneDataProvider
             runtime.NearbyMarkerLabel = closestLabel;
             runtime.NearbyMarkerKind = closestKind;
             runtime.PrimaryActionReady = closestId == "launch";
-            runtime.PrimaryActionHint = closestId == "launch" ? "Deploy" : (closestLabel ?? "");
+            runtime.PrimaryActionHint = closestId == "launch" ? "部署至当前地图" : (closestLabel ?? "");
             runtime.NearbyLootCount = 0;
         });
     }

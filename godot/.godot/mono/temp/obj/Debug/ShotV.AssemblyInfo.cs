@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("ShotV")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+7aeb268ad93a6ca1d705860ae5e183e7c5babfaa")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+60c9bb4d400b3c72ecbddcf193bab62e47219345")]
 [assembly: System.Reflection.AssemblyProductAttribute("ShotV")]
 [assembly: System.Reflection.AssemblyTitleAttribute("ShotV")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

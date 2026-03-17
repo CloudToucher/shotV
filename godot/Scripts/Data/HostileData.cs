@@ -31,6 +31,9 @@ public class HostileDefinition
     public float ChargeSpeed { get; init; }
     public float ChargeDuration { get; init; }
     public float RecoverDuration { get; init; }
+    public float AlertRadius { get; init; }
+    public float LeashRadius { get; init; }
+    public int ArmorLevel { get; init; }
     public HostileColors Colors { get; init; } = new();
 }
 
@@ -49,6 +52,9 @@ public static class HostileData
                 ContactDamage = 12f,
                 ContactInterval = 0.58f,
                 AttackCooldown = 0.24f,
+                AlertRadius = 240f,
+                LeashRadius = 720f,
+                ArmorLevel = 0,
                 Colors = new HostileColors
                 {
                     Body = Palette.EnemyMelee,
@@ -74,6 +80,9 @@ public static class HostileData
                 ProjectileSpeed = 320f,
                 ProjectileRadius = 7f,
                 ProjectileDamage = 12f,
+                AlertRadius = 320f,
+                LeashRadius = 760f,
+                ArmorLevel = 1,
                 Colors = new HostileColors
                 {
                     Body = Palette.EnemyRanged,
@@ -98,6 +107,9 @@ public static class HostileData
                 ChargeSpeed = 560f,
                 ChargeDuration = 0.28f,
                 RecoverDuration = 0.5f,
+                AlertRadius = 280f,
+                LeashRadius = 820f,
+                ArmorLevel = 2,
                 Colors = new HostileColors
                 {
                     Body = Palette.EnemyCharger,
@@ -123,6 +135,9 @@ public static class HostileData
                 ProjectileSpeed = 290f,
                 ProjectileRadius = 8f,
                 ProjectileDamage = 16f,
+                AlertRadius = 420f,
+                LeashRadius = 980f,
+                ArmorLevel = 4,
                 Colors = new HostileColors
                 {
                     Body = Palette.EnemyBoss,
