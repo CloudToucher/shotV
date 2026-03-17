@@ -149,7 +149,7 @@ public partial class ViewportOverlay
     {
         EnsureBaseStateSynced(inventory);
 
-        var host = CreateInteractiveSection("Base Storage", "Drag items between your base containers and the deployment pack.");
+        var host = CreateInteractiveSection(GameText.Text("inventory.base_storage"), GameText.Text("inventory.base_storage_meta"));
         host.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
         var body = host.GetChild<VBoxContainer>(0);
 
@@ -170,7 +170,7 @@ public partial class ViewportOverlay
         tabsRow.AddThemeConstantOverride("separation", 4);
         containerColumn.AddChild(tabsRow);
 
-        var stashTab = CreateSmallButton("Base Stash", true);
+        var stashTab = CreateSmallButton(GameText.Text("inventory.base_stash"), true);
         stashTab.AddThemeStyleboxOverride("normal", CreateButtonStyle(true, 1f));
         tabsRow.AddChild(stashTab);
 
@@ -199,7 +199,7 @@ public partial class ViewportOverlay
         gridRow.AddChild(packColumn);
 
         var packLabel = CreateLabel(13, Palette.UiText, true, 0.3f, true);
-        packLabel.Text = "Deployment Pack";
+        packLabel.Text = GameText.Text("inventory.deployment_pack");
         packColumn.AddChild(packLabel);
 
         var packScroll = new ScrollContainer
@@ -222,7 +222,7 @@ public partial class ViewportOverlay
         packCenter.AddChild(_basePackGrid);
 
         var noteLabel = CreateLabel(12, Palette.UiMuted, false, 0.2f, true);
-        noteLabel.Text = "Resources and salvage will automatically be placed into the base stash.";
+        noteLabel.Text = GameText.Text("inventory.base_resources_auto");
         body.AddChild(noteLabel);
 
         parent.AddChild(host);
@@ -247,7 +247,10 @@ public partial class ViewportOverlay
         rightCol.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
         split.AddChild(rightCol);
 
-        var quickSlotsCard = CreateContentCard("Quick slots", "Bound Consumables", "Quick access slots available during combat.");
+        var quickSlotsCard = CreateContentCard(
+            GameText.Text("inventory.quick_slots_title"),
+            GameText.Text("inventory.quick_slots_value"),
+            GameText.Text("inventory.quick_slots_meta"));
         var quickSlotsBody = quickSlotsCard.GetChild<VBoxContainer>(0);
         
         var quickRow = new VBoxContainer();
@@ -257,7 +260,7 @@ public partial class ViewportOverlay
         for (int index = 0; index < GridInventoryState.RunQuickSlotCount; index++)
         {
             int slotIndex = index;
-            var button = CreateSmallButton($"Slot {index + 1}", true);
+            var button = CreateSmallButton(GameText.Format("inventory.slot_button", index + 1), true);
             button.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
             button.Pressed += () => BindQuickSlot(slotIndex);
             quickRow.AddChild(button);
@@ -265,12 +268,12 @@ public partial class ViewportOverlay
         }
 
         var bindingHint = CreateLabel(12, Palette.UiMuted, false, 0.2f, true);
-        bindingHint.Text = "Click a slot or press 4 / 5 / 6 / 7 while hovering a carried consumable to bind it. Click with no target to clear.";
+        bindingHint.Text = GameText.Text("inventory.binding_hint");
         quickSlotsBody.AddChild(bindingHint);
         
         leftCol.AddChild(quickSlotsCard);
 
-        var host = CreateInteractiveSection("Inventory transfer", "Drag between the nearby ground grid and the carried pack. Drag to ground to drop the held item.");
+        var host = CreateInteractiveSection(GameText.Text("inventory.transfer"), GameText.Text("inventory.transfer_meta"));
         var body = host.GetChild<VBoxContainer>(0);
 
         _inventoryInstructionLabel = CreateLabel(12, Palette.UiMuted, false, 0.2f, true);
@@ -285,7 +288,7 @@ public partial class ViewportOverlay
         gridRow.AddChild(groundColumn);
 
         var groundLabel = CreateLabel(13, Palette.UiText, true, 0.3f, true);
-        groundLabel.Text = "Nearby ground loot";
+        groundLabel.Text = GameText.Text("inventory.nearby_ground");
         groundColumn.AddChild(groundLabel);
 
         _combatGroundGrid = new InventoryGridControl();
@@ -297,7 +300,7 @@ public partial class ViewportOverlay
         gridRow.AddChild(inventoryColumn);
 
         var inventoryLabel = CreateLabel(13, Palette.UiText, true, 0.3f, true);
-        inventoryLabel.Text = "Carried pack";
+        inventoryLabel.Text = GameText.Text("inventory.carried_pack");
         inventoryColumn.AddChild(inventoryLabel);
 
         var inventoryScroll = new ScrollContainer
@@ -326,7 +329,7 @@ public partial class ViewportOverlay
     {
         EnsureBaseStateSynced(inventory);
 
-        var packHost = CreateInteractiveSection("Deployment pack", "Only staged items are copied into the next run.");
+        var packHost = CreateInteractiveSection(GameText.Text("inventory.deployment_pack"), GameText.Text("inventory.launch_pack_meta"));
         packHost.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
         var packBody = packHost.GetChild<VBoxContainer>(0);
         
@@ -356,13 +359,13 @@ public partial class ViewportOverlay
         controlsRow.AddThemeConstantOverride("separation", 10);
         packBody.AddChild(controlsRow);
 
-        var adjustButton = CreateSmallButton("Adjust Supplies", true);
+        var adjustButton = CreateSmallButton(GameText.Text("inventory.adjust_supplies"), true);
         adjustButton.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
         adjustButton.Pressed += () => GameManager.Instance?.Store?.OpenScenePanel(ScenePanelMode.Locker);
         controlsRow.AddChild(adjustButton);
 
         var noteLabel = CreateLabel(12, Palette.UiMuted, false, 0.2f, true);
-        noteLabel.Text = "Resources are settled directly into base stock. The deployment pack only accepts reusable consumables.";
+        noteLabel.Text = GameText.Text("inventory.launch_resources");
         packBody.AddChild(noteLabel);
 
         parent.AddChild(packHost);
@@ -864,8 +867,8 @@ public partial class ViewportOverlay
             }
 
             string label = item != null && ItemData.ById.TryGetValue(item.ItemId, out var definition)
-                ? $"{index + 1}  {definition.ShortLabel}{(item.Quantity > 1 ? $" x{item.Quantity}" : "")}"
-                : $"{index + 1}  Empty";
+                ? GameText.Format("inventory.quick_button.item", index + 1, definition.ShortLabel, GameText.QuantitySuffix(item.Quantity))
+                : GameText.Format("inventory.quick_button.empty", index + 1);
 
             _quickSlotButtons[index].Text = label;
             _quickSlotButtons[index].Disabled = false;
@@ -881,9 +884,9 @@ public partial class ViewportOverlay
         {
             _inventoryInstructionLabel.Text = mode switch
             {
-                ScenePanelMode.Locker => "Pick up an item with left mouse, place it on another cell, press R to rotate, and press Z to auto-arrange.",
-                ScenePanelMode.Launch => "Move consumables between stash and deployment pack with left mouse. Press R to rotate and Z to auto-arrange.",
-                _ => "Pick from ground or pack with left mouse. Drop to pack to store it, drop to ground to release it, and press R / Z for rotate or auto-arrange.",
+                ScenePanelMode.Locker => GameText.Text("inventory.instruction.locker"),
+                ScenePanelMode.Launch => GameText.Text("inventory.instruction.launch"),
+                _ => GameText.Text("inventory.instruction.combat"),
             };
             return;
         }
@@ -891,9 +894,9 @@ public partial class ViewportOverlay
         string label = ItemData.ById.TryGetValue(_heldInventoryItem.ItemId, out var definition)
             ? definition.Label
             : _heldInventoryItem.ItemId;
-        string heldLabel = $"Holding: {label}{(_heldInventoryItem.Quantity > 1 ? $" x{_heldInventoryItem.Quantity}" : "")}";
+        string heldLabel = GameText.Format("inventory.holding", label, GameText.QuantitySuffix(_heldInventoryItem.Quantity));
         if (mode == ScenePanelMode.Launch && !CanItemEnterDeploymentPack(_heldInventoryItem))
-            heldLabel += " / cannot enter deployment pack";
+            heldLabel += GameText.Text("inventory.blocked_launch");
         _inventoryInstructionLabel.Text = heldLabel;
     }
 

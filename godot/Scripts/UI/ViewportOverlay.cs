@@ -117,7 +117,7 @@ public partial class ViewportOverlay : CanvasLayer
         dockBody.AddChild(accentLine);
 
         _dockKicker = CreateLabel(11, new Color(Palette.Frame, 0.92f), true, 1.8f);
-        _dockKicker.Text = "TACTICAL LINK";
+        _dockKicker.Text = GameText.Text("overlay.dock.kicker.tactical");
         dockBody.AddChild(_dockKicker);
 
         _dockTitle = CreateLabel(22, Palette.UiText, true, 0.6f);
@@ -133,11 +133,11 @@ public partial class ViewportOverlay : CanvasLayer
         actionRow.AddThemeConstantOverride("separation", 8);
         dockBody.AddChild(actionRow);
 
-        _primaryButton = CreateActionButton("部署行动", true);
+        _primaryButton = CreateActionButton(GameText.Text("overlay.button.deploy"), true);
         _primaryButton.Pressed += OnPrimaryActionPressed;
         actionRow.AddChild(_primaryButton);
 
-        _secondaryButton = CreateActionButton("立即撤离", false);
+        _secondaryButton = CreateActionButton(GameText.Text("overlay.button.extract_now"), false);
         _secondaryButton.Pressed += OnSecondaryActionPressed;
         actionRow.AddChild(_secondaryButton);
     }
@@ -195,7 +195,7 @@ public partial class ViewportOverlay : CanvasLayer
         modalBody.AddChild(accentLine);
 
         _settlementKicker = CreateLabel(11, new Color(Palette.Frame, 0.92f), true, 2f);
-        _settlementKicker.Text = "SETTLEMENT LINK";
+        _settlementKicker.Text = GameText.Text("overlay.settlement.kicker");
         modalBody.AddChild(_settlementKicker);
 
         _settlementTitle = CreateLabel(26, Palette.UiText, true, 0.6f);
@@ -217,20 +217,20 @@ public partial class ViewportOverlay : CanvasLayer
         _settlementGrid.AddThemeConstantOverride("v_separation", 12);
         modalBody.AddChild(_settlementGrid);
 
-        (_resultValue, _resultMeta) = AddSettlementCard(_settlementGrid, "行动结果");
-        (_battleValue, _battleMeta) = AddSettlementCard(_settlementGrid, "战斗数据");
-        (_resourcesValue, _resourcesMeta) = AddSettlementCard(_settlementGrid, "资源回收", true);
-        (_lootValue, _lootMeta) = AddSettlementCard(_settlementGrid, "物资结算", true);
+        (_resultValue, _resultMeta) = AddSettlementCard(_settlementGrid, GameText.Text("overlay.card.result"));
+        (_battleValue, _battleMeta) = AddSettlementCard(_settlementGrid, GameText.Text("overlay.card.battle"));
+        (_resourcesValue, _resourcesMeta) = AddSettlementCard(_settlementGrid, GameText.Text("overlay.card.resources"), true);
+        (_lootValue, _lootMeta) = AddSettlementCard(_settlementGrid, GameText.Text("overlay.card.loot"), true);
 
         var footnote = CreateLabel(12, Palette.UiMuted, false, 0.2f, true);
-        footnote.Text = "确认后返回基地，仓储无法容纳的携行物资会计入遗失。";
+        footnote.Text = GameText.Text("overlay.footnote.settlement");
         modalBody.AddChild(footnote);
 
         var actionRow = new HBoxContainer();
         actionRow.Alignment = BoxContainer.AlignmentMode.End;
         modalBody.AddChild(actionRow);
 
-        var confirmButton = CreateActionButton("确认结算并返回基地", true);
+        var confirmButton = CreateActionButton(GameText.Text("overlay.button.confirm_settlement"), true);
         confirmButton.CustomMinimumSize = new Vector2(240f, 0f);
         confirmButton.Pressed += OnPrimaryActionPressed;
         actionRow.AddChild(confirmButton);
@@ -260,14 +260,16 @@ public partial class ViewportOverlay : CanvasLayer
 
         if (showDock)
         {
-            _dockKicker.Text = state.Mode == GameMode.Base ? "DEPLOY LINK" : "TACTICAL LINK";
+            _dockKicker.Text = state.Mode == GameMode.Base
+                ? GameText.Text("overlay.dock.kicker.deploy")
+                : GameText.Text("overlay.dock.kicker.tactical");
             _dockTitle.Text = BuildHeadline(state.Mode, currentRoute, currentZone);
             _dockCopy.Text = BuildSubline(state.Mode, selectedRoute, activeRun, currentZone);
             _dockHint.Text = state.Mode == GameMode.Base && state.Runtime.PrimaryActionReady && deploymentReadiness != null
                 ? deploymentReadiness.Detail
                 : BuildSceneHint(state);
             _primaryButton.Text = state.Mode == GameMode.Base && deploymentReadiness is { CanDeploy: false }
-                ? "部署未就绪"
+                ? GameText.Text("overlay.primary.not_ready")
                 : BuildPrimaryActionLabel(state.Mode, activeRun);
             _primaryButton.Disabled = state.Mode == GameMode.Base
                 ? !state.Runtime.PrimaryActionReady || !(deploymentReadiness?.CanDeploy ?? true)
@@ -286,18 +288,18 @@ public partial class ViewportOverlay : CanvasLayer
         }
 
         _settlementTitle.Text = preview.Outcome == RunResolutionOutcome.Down
-            ? "行动中止 / 结算确认"
-            : "行动结算 / 返回确认";
+            ? GameText.Text("overlay.settlement.title.down")
+            : GameText.Text("overlay.settlement.title.return");
         _settlementRoute.Text = currentZone != null ? $"{currentRoute.Label} / {currentZone.Label}" : currentRoute.Label;
         _settlementSummary.Text = preview.SummaryLabel;
         _resultValue.Text = FormatOutcome(preview.Outcome);
-        _resultMeta.Text = $"用时 {FormatDuration(preview.DurationSeconds)}";
-        _battleValue.Text = $"击杀 {preview.Kills}";
-        _battleMeta.Text = $"最高波次 {preview.HighestWave}";
+        _resultMeta.Text = GameText.Format("overlay.settlement.time", FormatDuration(preview.DurationSeconds));
+        _battleValue.Text = GameText.Format("overlay.settlement.kills", preview.Kills);
+        _battleMeta.Text = GameText.Format("overlay.settlement.wave", preview.HighestWave);
         _resourcesValue.Text = FormatResourceBundle(preview.ResourcesRecovered, "无资源回收");
-        _resourcesMeta.Text = $"损失：{FormatResourceBundle(preview.ResourcesLost, "无资源损失")}";
+        _resourcesMeta.Text = GameText.Format("overlay.settlement.loss", FormatResourceBundle(preview.ResourcesLost, "无资源损失"));
         _lootValue.Text = FormatLootEntries(preview.LootRecovered, "无回收物资");
-        _lootMeta.Text = $"遗失：{FormatLootEntries(preview.LootLost, "无遗失物资")}";
+        _lootMeta.Text = GameText.Format("overlay.settlement.lost", FormatLootEntries(preview.LootLost, "无遗失物资"));
     }
 
     private void OnPrimaryActionPressed()
@@ -345,9 +347,9 @@ public partial class ViewportOverlay : CanvasLayer
     private static string BuildHeadline(GameMode mode, WorldRouteDefinition route, RunZoneState? currentZone)
     {
         if (mode == GameMode.Base)
-            return "基地待命";
+            return GameText.Text("overlay.headline.base");
 
-        return currentZone != null ? $"{route.Label} / {currentZone.Label}" : "战区行动";
+        return currentZone != null ? $"{route.Label} / {currentZone.Label}" : GameText.Text("overlay.headline.combat_default");
     }
 
     private static string BuildSubline(GameMode mode, WorldRouteDefinition selectedRoute, RunState? activeRun, RunZoneState? currentZone)
@@ -356,15 +358,15 @@ public partial class ViewportOverlay : CanvasLayer
             return $"{selectedRoute.Label} / {BuildMapSummary(selectedRoute)}";
 
         if (activeRun == null)
-            return "正在接入行动数据";
+            return GameText.Text("overlay.subline.connecting");
 
         if (activeRun.Status == RunStateStatus.AwaitingSettlement)
-            return $"结果：{FormatOutcome(activeRun.PendingOutcome ?? RunResolutionOutcome.Down)}";
+            return GameText.Format("overlay.subline.result", FormatOutcome(activeRun.PendingOutcome ?? RunResolutionOutcome.Down));
 
         if (currentZone != null)
-            return $"{currentZone.Label} / 威胁 {currentZone.ThreatLevel} / {currentZone.Description}";
+            return GameText.Format("overlay.subline.current_zone", currentZone.Label, currentZone.ThreatLevel, currentZone.Description);
 
-        return "开放区域行动";
+        return GameText.Text("overlay.subline.open_area");
     }
 
     private static string BuildSceneHint(GameState state)
@@ -373,19 +375,19 @@ public partial class ViewportOverlay : CanvasLayer
             return state.Runtime.PrimaryActionHint;
 
         return state.Mode == GameMode.Base
-            ? "前往出击闸门后再部署。"
-            : "前往撤离点结束行动，或继续在区域内探索。";
+            ? GameText.Text("overlay.hint.base")
+            : GameText.Text("overlay.hint.combat");
     }
 
     private static string BuildPrimaryActionLabel(GameMode mode, RunState? activeRun)
     {
         if (mode == GameMode.Base)
-            return "部署行动";
+            return GameText.Text("overlay.primary.deploy");
 
         if (activeRun?.Status == RunStateStatus.AwaitingSettlement)
-            return "确认结算并返回基地";
+            return GameText.Text("overlay.primary.confirm_return");
 
-        return "执行撤离";
+        return GameText.Text("overlay.primary.extract");
     }
 
     private static bool IsPrimaryActionDisabled(GameState state, RunState? activeRun, bool canExtract)
@@ -406,9 +408,9 @@ public partial class ViewportOverlay : CanvasLayer
     {
         return outcome switch
         {
-            RunResolutionOutcome.BossClear => "区域压制",
-            RunResolutionOutcome.Down => "行动失败",
-            _ => "成功撤离",
+            RunResolutionOutcome.BossClear => GameText.Text("overlay.outcome.boss_clear"),
+            RunResolutionOutcome.Down => GameText.Text("overlay.outcome.down"),
+            _ => GameText.Text("overlay.outcome.extracted"),
         };
     }
 
@@ -419,9 +421,9 @@ public partial class ViewportOverlay : CanvasLayer
         int restSeconds = seconds % 60;
 
         if (minutes <= 0)
-            return $"{restSeconds} 秒";
+            return GameText.Format("overlay.duration.seconds", restSeconds);
 
-        return $"{minutes} 分 {restSeconds:00} 秒";
+        return GameText.Format("overlay.duration.minutes", minutes, restSeconds);
     }
 
     private static string FormatResourceBundle(ResourceBundle bundle, string emptyLabel)
@@ -430,7 +432,7 @@ public partial class ViewportOverlay : CanvasLayer
         if (total <= 0)
             return emptyLabel;
 
-        return $"废料 {bundle.Salvage} / 合金 {bundle.Alloy} / 研究 {bundle.Research}";
+        return GameText.Format("overlay.resource_bundle", bundle.Salvage, bundle.Alloy, bundle.Research);
     }
 
     private static string FormatLootEntries(System.Collections.Generic.IReadOnlyList<LootEntry> entries, string emptyLabel)
@@ -444,7 +446,7 @@ public partial class ViewportOverlay : CanvasLayer
             labels[index] = entries[index].Label;
 
         return entries.Count > 4
-            ? $"{string.Join(" / ", labels)} 等 {entries.Count} 项"
+            ? GameText.Format("overlay.loot_more", string.Join(" / ", labels), entries.Count)
             : string.Join(" / ", labels);
     }
 

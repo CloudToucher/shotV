@@ -172,8 +172,8 @@ public static class WorldLayoutBuilder
         var spawnAnchors = CreateSpawnAnchors(regions, obstacles, playerSpawn, extractionPoint, input.Seed ^ 0x51eb851f);
         var markers = new List<WorldMarker>
         {
-            new() { Id = "entry", X = playerSpawn.X, Y = playerSpawn.Y + 90f, Label = "投送点", Kind = MarkerKind.Entry },
-            new() { Id = "extraction", X = extractionPoint.X, Y = extractionPoint.Y, Label = "撤离出口", Kind = MarkerKind.Extraction },
+            new() { Id = "entry", X = playerSpawn.X, Y = playerSpawn.Y + 90f, Label = GameText.Text("marker.entry.label"), Kind = MarkerKind.Entry },
+            new() { Id = "extraction", X = extractionPoint.X, Y = extractionPoint.Y, Label = GameText.Text("marker.extraction.label"), Kind = MarkerKind.Extraction },
         };
 
         foreach (var region in regions)
@@ -210,10 +210,10 @@ public static class WorldLayoutBuilder
         var playerSpawn = new Vector2(1120, 1320);
         var markers = new List<WorldMarker>
         {
-            new() { Id = "command", X = 1120, Y = 320, Label = "指挥台", Kind = MarkerKind.Station },
-            new() { Id = "locker", X = 740, Y = 720, Label = "储物柜", Kind = MarkerKind.Locker },
-            new() { Id = "workshop", X = 1490, Y = 760, Label = "工坊台", Kind = MarkerKind.Station },
-            new() { Id = "launch", X = 1120, Y = 1460, Label = "出击闸门", Kind = MarkerKind.Entry },
+            new() { Id = "command", X = 1120, Y = 320, Label = GameText.Text("marker.command.label"), Kind = MarkerKind.Station },
+            new() { Id = "locker", X = 740, Y = 720, Label = GameText.Text("marker.locker.label"), Kind = MarkerKind.Locker },
+            new() { Id = "workshop", X = 1490, Y = 760, Label = GameText.Text("marker.workshop.label"), Kind = MarkerKind.Station },
+            new() { Id = "launch", X = 1120, Y = 1460, Label = GameText.Text("marker.launch.label"), Kind = MarkerKind.Entry },
         };
         var obstacles = new List<WorldObstacle>
         {

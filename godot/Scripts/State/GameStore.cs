@@ -632,8 +632,8 @@ public class GameStore
             CapacityCells = pack.Columns * pack.Rows,
             OccupiedCells = pack.Items.Sum(item => item.Width * item.Height),
             StagedUnits = pack.Items.Sum(item => item.Quantity),
-            StatusLabel = "Ready",
-            Detail = "Deployment pack is acceptable for the selected map.",
+            StatusLabel = GameText.Text("readiness.ready"),
+            Detail = GameText.Text("readiness.acceptable"),
             CanDeploy = true,
         };
 
@@ -653,44 +653,44 @@ public class GameStore
         if (save.Inventory.EquippedWeaponIds.Count == 0)
         {
             result.CanDeploy = false;
-            result.StatusLabel = "Blocked";
-            result.Detail = "At least one weapon must remain equipped before deployment.";
+            result.StatusLabel = GameText.Text("readiness.blocked");
+            result.Detail = GameText.Text("readiness.no_weapon");
             return result;
         }
 
         if (result.HighestThreat >= 3 && result.HealingUnits <= 0)
         {
             result.CanDeploy = false;
-            result.StatusLabel = "Blocked";
-            result.Detail = "High-risk maps require at least one healing consumable in the deployment pack.";
+            result.StatusLabel = GameText.Text("readiness.blocked");
+            result.Detail = GameText.Text("readiness.need_heal");
             return result;
         }
 
         if (result.HighestThreat >= 2 && result.StagedUnits <= 0)
         {
             result.CanDeploy = false;
-            result.StatusLabel = "Blocked";
-            result.Detail = "Stage at least one consumable before entering medium or high-risk regions.";
+            result.StatusLabel = GameText.Text("readiness.blocked");
+            result.Detail = GameText.Text("readiness.need_staged");
             return result;
         }
 
         var warnings = new List<string>();
         if (result.HighestThreat >= 2 && result.HealingUnits <= 0)
-            warnings.Add("no medical support");
+            warnings.Add(GameText.Text("readiness.warning.no_medical"));
         if (result.HighestThreat >= 2 && result.MobilityUnits <= 0)
-            warnings.Add("no mobility reserve");
+            warnings.Add(GameText.Text("readiness.warning.no_mobility"));
         if (result.HighestThreat >= 2 && result.UtilityUnits <= 0)
-            warnings.Add("no area-control item");
+            warnings.Add(GameText.Text("readiness.warning.no_utility"));
         if (result.HighestThreat >= 3 && result.StagedUnits < 2)
-            warnings.Add("payload is very light");
+            warnings.Add(GameText.Text("readiness.warning.light_payload"));
         if (result.HighestThreat <= 1 && result.StagedUnits <= 0)
-            warnings.Add("deploying with an empty pack");
+            warnings.Add(GameText.Text("readiness.warning.empty_pack"));
 
         if (warnings.Count > 0)
         {
             result.HasWarnings = true;
-            result.StatusLabel = "Caution";
-            result.Detail = $"Map is deployable, but {string.Join(", ", warnings)}.";
+            result.StatusLabel = GameText.Text("readiness.caution");
+            result.Detail = GameText.Format("readiness.warning.detail", string.Join("、", warnings));
         }
 
         return result;
@@ -734,10 +734,14 @@ public class GameStore
     private static string BuildExtractionSummaryLabel(RunResolutionOutcome outcome, string? zoneLabel)
     {
         if (outcome == RunResolutionOutcome.BossClear)
-            return zoneLabel != null ? $"{zoneLabel}压制完成" : "地图压制完成";
+            return zoneLabel != null
+                ? GameText.Format("overlay.extraction.boss_clear_with_zone", zoneLabel)
+                : GameText.Text("overlay.extraction.boss_clear");
         if (outcome == RunResolutionOutcome.Down)
-            return "行动失败";
-        return zoneLabel != null ? $"已从{zoneLabel}撤离" : "成功撤离";
+            return GameText.Text("overlay.extraction.down");
+        return zoneLabel != null
+            ? GameText.Format("overlay.extraction.extracted_with_zone", zoneLabel)
+            : GameText.Text("overlay.extraction.extracted");
     }
 
     private static List<WeaponType> BuildRunLoadout(SaveState save)

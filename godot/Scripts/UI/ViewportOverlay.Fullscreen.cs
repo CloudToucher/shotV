@@ -222,7 +222,7 @@ public partial class ViewportOverlay
         body.AddChild(accentLine);
 
         _panelKicker = CreateLabel(11, new Color(Palette.Frame, 0.92f), true, 1.6f);
-        _panelKicker.Text = "OPERATIONS PANEL";
+        _panelKicker.Text = GameText.Text("fullscreen.panel.kicker");
         body.AddChild(_panelKicker);
 
         _panelTitle = CreateLabel(24, Palette.UiText, true, 0.6f, true);
@@ -246,14 +246,14 @@ public partial class ViewportOverlay
 
         _panelFooter = CreateLabel(12, Palette.UiMuted, false, 0.2f, true);
         _panelFooter.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
-        _panelFooter.Text = "Tab closes the panel. M opens the full map.";
+        _panelFooter.Text = GameText.Text("fullscreen.panel.footer");
         footerRow.AddChild(_panelFooter);
 
-        _panelSecondaryButton = CreateActionButton("Close", false);
+        _panelSecondaryButton = CreateActionButton(GameText.Text("common.close"), false);
         _panelSecondaryButton.Pressed += OnPanelSecondaryPressed;
         footerRow.AddChild(_panelSecondaryButton);
 
-        _panelPrimaryButton = CreateActionButton("Apply", true);
+        _panelPrimaryButton = CreateActionButton(GameText.Text("fullscreen.action.deploy"), true);
         _panelPrimaryButton.Pressed += OnPanelPrimaryPressed;
         footerRow.AddChild(_panelPrimaryButton);
 
@@ -267,7 +267,7 @@ public partial class ViewportOverlay
         if (!visible)
             return;
 
-        _baseBannerTitle.Text = $"BASE CAMP / {selectedRoute.Label}";
+        _baseBannerTitle.Text = GameText.Format("fullscreen.base_banner.title", selectedRoute.Label);
         _baseBannerHint.Text = !string.IsNullOrWhiteSpace(state.Runtime.PrimaryActionHint)
             ? state.Runtime.PrimaryActionHint
             : BuildMapSummary(selectedRoute);
@@ -289,16 +289,16 @@ public partial class ViewportOverlay
         string focusLabel = ResolveFocusedMarkerLabel(snapshot);
         if (state.Mode == GameMode.Base)
         {
-            _overviewTitle.Text = $"BASE OVERVIEW / {selectedRoute.Label}";
-            _overviewMeta.Text = $"Focus: {focusLabel}\nLegend: player / camera / markers";
-            _overviewHint.Text = "Review base stations, map intel, and the launch gate before deployment. Press M to close.";
+            _overviewTitle.Text = GameText.Format("fullscreen.overview.base_title", selectedRoute.Label);
+            _overviewMeta.Text = GameText.Format("fullscreen.overview.base_meta", focusLabel);
+            _overviewHint.Text = GameText.Text("fullscreen.overview.base_hint");
             return;
         }
 
-        string zoneLabel = currentZone?.Label ?? "Current Region";
+        string zoneLabel = currentZone?.Label ?? GameText.Text("fullscreen.overview.current_region");
         int enemyCount = snapshot?.EnemyPositions.Count ?? 0;
         _overviewTitle.Text = $"{currentRoute.Label} / {zoneLabel}";
-        _overviewMeta.Text = $"Focus: {focusLabel}\nEnemies: {enemyCount} / Nearby loot: {state.Runtime.NearbyLootCount}";
+        _overviewMeta.Text = GameText.Format("fullscreen.overview.meta", focusLabel, enemyCount, state.Runtime.NearbyLootCount);
         _overviewHint.Text = BuildSceneHint(state);
     }
 
@@ -343,10 +343,10 @@ public partial class ViewportOverlay
     private static string ResolveFocusedMarkerLabel(OverlayWorldSnapshot? snapshot)
     {
         if (snapshot == null)
-            return "No focus";
+            return GameText.Text("common.no_focus");
 
         var marker = snapshot.Markers.FirstOrDefault(entry => entry.Id == snapshot.HighlightedMarkerId);
-        return marker?.Label ?? "No focus";
+        return marker?.Label ?? GameText.Text("common.no_focus");
     }
 
     private void RefreshScenePanel(GameState state, WorldRouteDefinition selectedRoute, WorldRouteDefinition currentRoute, RunZoneState? currentZone, RunState? activeRun, bool showSettlement)
@@ -373,21 +373,23 @@ public partial class ViewportOverlay
     {
         _panelTitle.Text = mode switch
         {
-            ScenePanelMode.Locker => "Locker / Stash",
-            ScenePanelMode.Workshop => "Workshop / Loadout",
-            ScenePanelMode.Command => "Command / Map Intel",
-            ScenePanelMode.Launch => "Launch / Deploy",
-            ScenePanelMode.CombatInventory => "Combat Pack / Loot",
-            _ => state.Mode == GameMode.Base ? "Base Overview" : "Mission Overview",
+            ScenePanelMode.Locker => GameText.Text("fullscreen.panel.title.locker"),
+            ScenePanelMode.Workshop => GameText.Text("fullscreen.panel.title.workshop"),
+            ScenePanelMode.Command => GameText.Text("fullscreen.panel.title.command"),
+            ScenePanelMode.Launch => GameText.Text("fullscreen.panel.title.launch"),
+            ScenePanelMode.CombatInventory => GameText.Text("fullscreen.panel.title.combat_inventory"),
+            _ => state.Mode == GameMode.Base
+                ? GameText.Text("fullscreen.panel.title.base_overview")
+                : GameText.Text("fullscreen.panel.title.mission_overview"),
         };
 
         _panelMeta.Text = mode switch
         {
             ScenePanelMode.CombatInventory when activeRun != null => $"{currentRoute.Label} / {currentZone?.Label ?? activeRun.Map.CurrentZoneId}",
-            ScenePanelMode.Command => $"Selected map: {selectedRoute.Label}",
-            ScenePanelMode.Workshop => "Loadout order is mirrored to weapon slots 1 / 2 / 3. Fabricated consumables are stored in the stash.",
-            ScenePanelMode.Locker => $"Stored items: {state.Save.Inventory.StoredItems.Count}",
-            ScenePanelMode.Launch => $"Deployment target: {selectedRoute.Label} / staged items: {state.Save.Inventory.DeploymentPack.Items.Count}",
+            ScenePanelMode.Command => GameText.Format("fullscreen.panel.meta.selected_map", selectedRoute.Label),
+            ScenePanelMode.Workshop => GameText.Text("fullscreen.panel.meta.workshop"),
+            ScenePanelMode.Locker => GameText.Format("fullscreen.panel.meta.stored_items", state.Save.Inventory.StoredItems.Count),
+            ScenePanelMode.Launch => GameText.Format("fullscreen.panel.meta.deployment_target", selectedRoute.Label, state.Save.Inventory.DeploymentPack.Items.Count),
             _ => state.Mode == GameMode.Base ? BuildMapSummary(selectedRoute) : BuildSceneHint(state),
         };
     }
@@ -468,29 +470,29 @@ public partial class ViewportOverlay
 
         if (state.Mode == GameMode.Base)
         {
-            AddCardTo(leftCol, "Resources", FormatBaseResources(state.Save.Base.Resources), string.Empty);
-            AddCardTo(leftCol, "Map", $"{selectedRoute.Label}\nRegions: {selectedRoute.Zones.Length}", string.Empty);
-            AddCardTo(leftCol, "Stash", $"Items: {state.Save.Inventory.StoredItems.Count}\nKnown regions: {state.Save.World.DiscoveredZones.Count}", string.Empty);
+            AddCardTo(leftCol, GameText.Text("fullscreen.card.resources"), FormatBaseResources(state.Save.Base.Resources), string.Empty);
+            AddCardTo(leftCol, GameText.Text("fullscreen.card.map"), $"{selectedRoute.Label}\n区域：{selectedRoute.Zones.Length}", string.Empty);
+            AddCardTo(leftCol, GameText.Text("fullscreen.card.stash"), $"物品：{state.Save.Inventory.StoredItems.Count}\n已知区域：{state.Save.World.DiscoveredZones.Count}", string.Empty);
 
-            AddCardTo(rightCol, "Selected map", selectedRoute.Label, BuildMapSummary(selectedRoute));
-            AddCardTo(rightCol, "Current stash", $"Stored items: {state.Save.Inventory.StoredItems.Count}", "Open Locker for item details and auto-arrange.");
-            AddCardTo(rightCol, "Workshop", FormatLoadout(state.Save.Inventory.EquippedWeaponIds), "Open Workshop to reorder the loadout used by weapon slots.");
+            AddCardTo(rightCol, GameText.Text("fullscreen.card.selected_map"), selectedRoute.Label, BuildMapSummary(selectedRoute));
+            AddCardTo(rightCol, GameText.Text("fullscreen.card.current_stash"), GameText.Format("fullscreen.locker.info_value", state.Save.Inventory.StoredItems.Count), GameText.Text("fullscreen.card.current_stash_meta"));
+            AddCardTo(rightCol, GameText.Text("fullscreen.card.workshop"), FormatLoadout(state.Save.Inventory.EquippedWeaponIds), GameText.Text("fullscreen.card.workshop_meta"));
             if (state.Save.Session.LastExtraction != null)
-                AddCardTo(rightCol, "Last extraction", FormatOutcome(state.Save.Session.LastExtraction.Outcome), state.Save.Session.LastExtraction.SummaryLabel);
+                AddCardTo(rightCol, GameText.Text("fullscreen.card.last_extraction"), FormatOutcome(state.Save.Session.LastExtraction.Outcome), state.Save.Session.LastExtraction.SummaryLabel);
             return;
         }
 
         if (activeRun == null)
             return;
 
-        AddCardTo(leftCol, "Resources", FormatResourceBundle(activeRun.Resources, "No carried resources"), string.Empty);
-        AddCardTo(leftCol, "Region", $"{currentRoute.Label}\n{currentZone?.Label ?? activeRun.Map.CurrentZoneId}", string.Empty);
-        AddCardTo(leftCol, "Loadout", FormatLoadout(activeRun.Player.LoadoutWeaponIds), string.Empty);
-        AddCardTo(leftCol, "Runtime", $"Kills: {activeRun.Stats.Kills}\nNearby loot: {state.Runtime.NearbyLootCount}", string.Empty);
+        AddCardTo(leftCol, GameText.Text("fullscreen.card.resources"), FormatResourceBundle(activeRun.Resources, GameText.Text("common.no_carried_resources")), string.Empty);
+        AddCardTo(leftCol, GameText.Text("fullscreen.card.region"), $"{currentRoute.Label}\n{currentZone?.Label ?? activeRun.Map.CurrentZoneId}", string.Empty);
+        AddCardTo(leftCol, GameText.Text("fullscreen.card.loadout"), FormatLoadout(activeRun.Player.LoadoutWeaponIds), string.Empty);
+        AddCardTo(leftCol, GameText.Text("fullscreen.card.runtime"), GameText.Format("fullscreen.card.runtime_value", activeRun.Stats.Kills, state.Runtime.NearbyLootCount), string.Empty);
 
-        AddCardTo(rightCol, "AO", $"{currentRoute.Label} / {currentZone?.Label ?? activeRun.Map.CurrentZoneId}", currentZone?.Description ?? "Open-world combat is active.");
-        AddCardTo(rightCol, "Pack", $"Items carried: {activeRun.Inventory.Items.Count}", $"Quick slots: {FormatQuickSlots(activeRun.Inventory)}");
-        AddCardTo(rightCol, "Loot", $"Ground loot: {activeRun.GroundLoot.Count}", $"Nearby pickups: {state.Runtime.NearbyLootCount}");
+        AddCardTo(rightCol, GameText.Text("fullscreen.card.ao"), $"{currentRoute.Label} / {currentZone?.Label ?? activeRun.Map.CurrentZoneId}", currentZone?.Description ?? GameText.Text("fullscreen.card.ao_meta"));
+        AddCardTo(rightCol, GameText.Text("fullscreen.card.pack"), GameText.Format("fullscreen.card.pack_value", activeRun.Inventory.Items.Count), GameText.Format("fullscreen.card.pack_meta", FormatQuickSlots(activeRun.Inventory)));
+        AddCardTo(rightCol, GameText.Text("fullscreen.card.loot"), GameText.Format("fullscreen.card.loot_value", activeRun.GroundLoot.Count), GameText.Format("fullscreen.card.loot_meta", state.Runtime.NearbyLootCount));
     }
 
     private void BuildLockerPanel(InventoryState inventory)
@@ -510,7 +512,7 @@ public partial class ViewportOverlay
         contentCol.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
         split.AddChild(contentCol);
 
-        AddCardTo(infoCol, "Stash Information", $"Stored items: {inventory.StoredItems.Count}", "The base locker is used to store components, salvage, and fabrication materials.");
+        AddCardTo(infoCol, GameText.Text("fullscreen.locker.info_title"), GameText.Format("fullscreen.locker.info_value", inventory.StoredItems.Count), GameText.Text("fullscreen.locker.info_meta"));
         
         BuildLockerInventoryContent(contentCol, inventory);
     }
@@ -530,7 +532,7 @@ public partial class ViewportOverlay
         split.AddChild(weaponsCol);
 
         var header = CreateLabel(14, Palette.UiText, true, 0.4f, false);
-        header.Text = "Loadout Configuration";
+        header.Text = GameText.Text("fullscreen.workshop.header");
         weaponsCol.AddChild(header);
 
         for (int index = 0; index < inventory.EquippedWeaponIds.Count; index++)
@@ -538,18 +540,18 @@ public partial class ViewportOverlay
             int weaponIndex = index;
             var weaponId = inventory.EquippedWeaponIds[index];
             var weapon = WeaponData.ById[weaponId];
-            var card = CreateContentCard("Weapon slot", $"{index + 1}. {weapon.Label}", weapon.Hint);
+            var card = CreateContentCard(GameText.Text("fullscreen.workshop.weapon_slot"), $"{index + 1}. {weapon.Label}", weapon.Hint);
             var body = card.GetChild<VBoxContainer>(0);
 
             var actionRow = new HBoxContainer();
             actionRow.AddThemeConstantOverride("separation", 8);
             body.AddChild(actionRow);
 
-            var upButton = CreateSmallButton("Move Up", weaponIndex > 0);
+            var upButton = CreateSmallButton(GameText.Text("fullscreen.workshop.move_up"), weaponIndex > 0);
             upButton.Pressed += () => GameManager.Instance?.Store?.MoveEquippedWeapon(weaponIndex, weaponIndex - 1);
             actionRow.AddChild(upButton);
 
-            var downButton = CreateSmallButton("Move Down", weaponIndex < inventory.EquippedWeaponIds.Count - 1);
+            var downButton = CreateSmallButton(GameText.Text("fullscreen.workshop.move_down"), weaponIndex < inventory.EquippedWeaponIds.Count - 1);
             downButton.Pressed += () => GameManager.Instance?.Store?.MoveEquippedWeapon(weaponIndex, weaponIndex + 1);
             actionRow.AddChild(downButton);
 
@@ -562,7 +564,7 @@ public partial class ViewportOverlay
         split.AddChild(fabCol);
 
         var fabHeader = CreateLabel(14, Palette.UiText, true, 0.4f, false);
-        fabHeader.Text = "Fabrication";
+        fabHeader.Text = GameText.Text("fullscreen.workshop.fabrication");
         fabCol.AddChild(fabHeader);
 
         var fabScroll = new ScrollContainer
@@ -580,26 +582,26 @@ public partial class ViewportOverlay
 
         foreach (var definition in ItemData.Catalog.Where(item => item.CraftCost != null))
         {
-            var card = CreateContentCard("Blueprint", definition.Label, definition.Description);
+            var card = CreateContentCard(GameText.Text("fullscreen.workshop.blueprint"), definition.Label, definition.Description);
             var body = card.GetChild<VBoxContainer>(0);
 
             var costLabel = CreateLabel(12, Palette.UiMuted, false, 0.2f, true);
-            costLabel.Text = $"Cost: {FormatCompactResourceBundle(definition.CraftCost!)}";
+            costLabel.Text = GameText.Format("fullscreen.workshop.cost", FormatCompactResourceBundle(definition.CraftCost!));
             body.AddChild(costLabel);
 
             int stashCount = CountStoredQuantity(inventory.StoredItems, definition.Id);
             var stockLabel = CreateLabel(12, Palette.UiMuted, false, 0.2f, true);
-            stockLabel.Text = $"In stash: {stashCount}";
+            stockLabel.Text = GameText.Format("fullscreen.workshop.in_stash", stashCount);
             body.AddChild(stockLabel);
 
             bool canCraft = CanCraftWorkshopItem(state, definition);
             var statusLabel = CreateLabel(12, canCraft ? Palette.Accent : Palette.UiMuted, false, 0.2f, true);
             statusLabel.Text = canCraft
-                ? "Ready to fabricate into the base stash."
+                ? GameText.Text("fullscreen.workshop.ready")
                 : ResolveWorkshopCraftBlocker(state, definition);
             body.AddChild(statusLabel);
 
-            var craftButton = CreateSmallButton(canCraft ? "Fabricate" : "Unavailable", canCraft);
+            var craftButton = CreateSmallButton(canCraft ? GameText.Text("fullscreen.workshop.fabricate") : GameText.Text("common.unavailable"), canCraft);
             craftButton.Pressed += () => GameManager.Instance?.Store?.CraftWorkshopItem(definition.Id);
             body.AddChild(craftButton);
 
@@ -627,11 +629,11 @@ public partial class ViewportOverlay
         {
             int extractionCount = route.Zones.Count(zone => zone.AllowsExtraction);
             int highestThreat = route.Zones.Length > 0 ? route.Zones.Max(zone => zone.ThreatLevel) : 0;
-            var card = CreateContentCard("Map", route.Label, BuildMapSummary(route));
+            var card = CreateContentCard(GameText.Text("fullscreen.card.map"), route.Label, BuildMapSummary(route));
             var body = card.GetChild<VBoxContainer>(0);
 
             var pressureLabel = CreateLabel(12, Palette.UiMuted, false, 0.2f, true);
-            pressureLabel.Text = $"Regions {route.Zones.Length} / Highest threat {highestThreat} / Extraction points {extractionCount}";
+            pressureLabel.Text = GameText.Format("fullscreen.command.pressure", route.Zones.Length, highestThreat, extractionCount);
             body.AddChild(pressureLabel);
 
             var supplyLabel = CreateLabel(12, Palette.UiMuted, false, 0.2f, true);
@@ -645,7 +647,7 @@ public partial class ViewportOverlay
                 body.AddChild(regionLabel);
             }
 
-            var button = CreateSmallButton(route.Id == selectedRouteId ? "Selected" : "Select Map", route.Id != selectedRouteId);
+            var button = CreateSmallButton(route.Id == selectedRouteId ? GameText.Text("common.selected") : GameText.Text("fullscreen.command.select_map"), route.Id != selectedRouteId);
             button.Pressed += () => GameManager.Instance?.Store?.SelectWorldMap(route.Id);
             body.AddChild(button);
 
@@ -659,8 +661,8 @@ public partial class ViewportOverlay
         var readiness = GameManager.Instance?.Store?.EvaluateDeploymentReadiness() ?? new DeploymentReadinessResult
         {
             CanDeploy = true,
-            StatusLabel = "Ready",
-            Detail = "Deployment pack is acceptable for the selected map.",
+            StatusLabel = GameText.Text("readiness.ready"),
+            Detail = GameText.Text("readiness.acceptable"),
             CapacityCells = inventory.DeploymentPack.Columns * inventory.DeploymentPack.Rows,
         };
 
@@ -688,17 +690,17 @@ public partial class ViewportOverlay
         infoGrid.AddThemeConstantOverride("v_separation", 12);
         topList.AddChild(infoGrid);
 
-        AddCardTo(infoGrid, "Selected map", selectedRoute.Label, BuildMapSummary(selectedRoute));
-        AddCardTo(infoGrid, "Regional pressure", $"Highest threat {readiness.HighestThreat} / Regions {selectedRoute.Zones.Length}", readiness.HighestThreat >= 3
-            ? "High-risk map: medical support is mandatory before deployment."
-            : "Lower-risk map: empty deployment packs are still allowed, but not recommended.");
-        AddCardTo(infoGrid, "Deployment status", readiness.StatusLabel, readiness.Detail);
-        AddCardTo(infoGrid, "Pack summary",
-            $"Units {readiness.StagedUnits} / Cells {readiness.OccupiedCells}/{Mathf.Max(1, readiness.CapacityCells)}",
-            $"Heal {readiness.HealingUnits} / Mobility {readiness.MobilityUnits} / Utility {readiness.UtilityUnits}");
+        AddCardTo(infoGrid, GameText.Text("fullscreen.card.selected_map"), selectedRoute.Label, BuildMapSummary(selectedRoute));
+        AddCardTo(infoGrid, GameText.Text("fullscreen.launch.regional_pressure"), GameText.Format("fullscreen.launch.pressure_value", readiness.HighestThreat, selectedRoute.Zones.Length), readiness.HighestThreat >= 3
+            ? GameText.Text("fullscreen.launch.high_risk_hint")
+            : GameText.Text("fullscreen.launch.low_risk_hint"));
+        AddCardTo(infoGrid, GameText.Text("fullscreen.launch.deployment_status"), readiness.StatusLabel, readiness.Detail);
+        AddCardTo(infoGrid, GameText.Text("fullscreen.launch.pack_summary"),
+            GameText.Format("fullscreen.launch.pack_summary_value", readiness.StagedUnits, readiness.OccupiedCells, Mathf.Max(1, readiness.CapacityCells)),
+            GameText.Format("fullscreen.launch.pack_summary_meta", readiness.HealingUnits, readiness.MobilityUnits, readiness.UtilityUnits));
 
         var packLabel = CreateLabel(14, Palette.UiText, true, 0.4f, false);
-        packLabel.Text = "Deployment Pack";
+        packLabel.Text = GameText.Text("fullscreen.launch.pack_label");
         _panelContentContainer.AddChild(packLabel);
 
         BuildLaunchInventoryContent(_panelContentContainer, inventory);
@@ -706,41 +708,43 @@ public partial class ViewportOverlay
 
     private void BuildCombatInventoryPanel(RunState activeRun, WorldRouteDefinition currentRoute, RunZoneState? currentZone)
     {
-        AddContentCard("Region", $"{currentRoute.Label} / {currentZone?.Label ?? activeRun.Map.CurrentZoneId}", currentZone?.Description ?? "Combat is active.");
+        AddContentCard(GameText.Text("fullscreen.card.region"), $"{currentRoute.Label} / {currentZone?.Label ?? activeRun.Map.CurrentZoneId}", currentZone?.Description ?? GameText.Text("fullscreen.card.ao_meta"));
         BuildCombatInventoryContent(activeRun);
     }
 
     private void UpdatePanelActions(GameState state, RunState? activeRun, ScenePanelMode mode)
     {
         _panelSecondaryButton.Visible = true;
-        _panelSecondaryButton.Text = "Close";
+        _panelSecondaryButton.Text = GameText.Text("common.close");
         _panelSecondaryButton.Disabled = false;
 
         switch (mode)
         {
             case ScenePanelMode.Locker:
-                _panelPrimaryButton.Text = "Auto Arrange";
+                _panelPrimaryButton.Text = GameText.Text("fullscreen.action.auto_arrange");
                 _panelPrimaryButton.Disabled = false;
                 break;
             case ScenePanelMode.Workshop:
-                _panelPrimaryButton.Text = "Rotate Loadout";
+                _panelPrimaryButton.Text = GameText.Text("fullscreen.action.rotate_loadout");
                 _panelPrimaryButton.Disabled = state.Save.Inventory.EquippedWeaponIds.Count < 2;
                 break;
             case ScenePanelMode.Command:
-                _panelPrimaryButton.Text = "Cycle Map";
+                _panelPrimaryButton.Text = GameText.Text("fullscreen.action.cycle_map");
                 _panelPrimaryButton.Disabled = false;
                 break;
             case ScenePanelMode.Launch:
-                _panelPrimaryButton.Text = "Deploy";
+                _panelPrimaryButton.Text = GameText.Text("fullscreen.action.deploy");
                 _panelPrimaryButton.Disabled = !state.Runtime.PrimaryActionReady
                     || !(GameManager.Instance?.Store?.EvaluateDeploymentReadiness().CanDeploy ?? true);
                 break;
             case ScenePanelMode.CombatInventory:
-                _panelPrimaryButton.Text = "Sort Pack";
+                _panelPrimaryButton.Text = GameText.Text("fullscreen.action.sort_pack");
                 _panelPrimaryButton.Disabled = activeRun == null || activeRun.Inventory.Items.Count < 2;
                 break;
             default:
-                _panelPrimaryButton.Text = state.Mode == GameMode.Base ? "Deploy" : "Sort Pack";
+                _panelPrimaryButton.Text = state.Mode == GameMode.Base
+                    ? GameText.Text("fullscreen.action.deploy")
+                    : GameText.Text("fullscreen.action.sort_pack");
                 _panelPrimaryButton.Disabled = state.Mode == GameMode.Base ? !state.Runtime.PrimaryActionReady : activeRun == null || activeRun.Inventory.Items.Count < 2;
                 break;
         }
@@ -889,15 +893,15 @@ public partial class ViewportOverlay
     {
         if (gameMode == GameMode.Base)
         {
-            yield return (ScenePanelMode.Overview, "Overview");
-            yield return (ScenePanelMode.Locker, "Locker");
-            yield return (ScenePanelMode.Workshop, "Workshop");
-            yield return (ScenePanelMode.Command, "Intel");
-            yield return (ScenePanelMode.Launch, "Launch");
+            yield return (ScenePanelMode.Overview, GameText.Text("fullscreen.tab.overview"));
+            yield return (ScenePanelMode.Locker, GameText.Text("fullscreen.tab.locker"));
+            yield return (ScenePanelMode.Workshop, GameText.Text("fullscreen.tab.workshop"));
+            yield return (ScenePanelMode.Command, GameText.Text("fullscreen.tab.command"));
+            yield return (ScenePanelMode.Launch, GameText.Text("fullscreen.tab.launch"));
             yield break;
         }
 
-        yield return (ScenePanelMode.CombatInventory, "Inventory");
+        yield return (ScenePanelMode.CombatInventory, GameText.Text("fullscreen.tab.inventory"));
     }
 
     private static string BuildPanelContentKey(GameState state, ScenePanelMode mode)
@@ -914,7 +918,7 @@ public partial class ViewportOverlay
     private static string FormatLoadout(IReadOnlyList<WeaponType> loadout)
     {
         if (loadout.Count == 0)
-            return "No weapons equipped";
+            return GameText.Text("common.no_weapons");
 
         var labels = new List<string>(loadout.Count);
         foreach (var weaponId in loadout)
@@ -934,14 +938,14 @@ public partial class ViewportOverlay
             var record = slotId != null ? inventory.Items.Find(item => item.Id == slotId) : null;
             if (record == null)
             {
-                labels.Add($"{index + 1}: empty");
+                labels.Add(GameText.Format("fullscreen.quick_slot.empty", index + 1));
                 continue;
             }
 
             string itemLabel = ItemData.ById.TryGetValue(record.ItemId, out var definition)
                 ? definition.ShortLabel
                 : record.ItemId;
-            labels.Add($"{index + 1}: {itemLabel}");
+            labels.Add(GameText.Format("fullscreen.quick_slot.item", index + 1, itemLabel));
         }
 
         return string.Join(" / ", labels);
@@ -951,27 +955,27 @@ public partial class ViewportOverlay
     {
         int total = resources.Salvage + resources.Alloy + resources.Research;
         if (total <= 0)
-            return "No base stock";
+            return GameText.Text("common.no_base_stock");
 
-        return $"Scrap {resources.Salvage} / Alloy {resources.Alloy} / Research {resources.Research}";
+        return GameText.Format("fullscreen.base_resources", resources.Salvage, resources.Alloy, resources.Research);
     }
 
     private static string FormatCompactResourceBundle(ResourceBundle bundle)
     {
         var parts = new List<string>(3);
         if (bundle.Salvage > 0)
-            parts.Add($"Scrap {bundle.Salvage}");
+            parts.Add(GameText.Format("fullscreen.resource.scrap", bundle.Salvage));
         if (bundle.Alloy > 0)
-            parts.Add($"Alloy {bundle.Alloy}");
+            parts.Add(GameText.Format("fullscreen.resource.alloy", bundle.Alloy));
         if (bundle.Research > 0)
-            parts.Add($"Research {bundle.Research}");
-        return parts.Count > 0 ? string.Join(" / ", parts) : "No cost";
+            parts.Add(GameText.Format("fullscreen.resource.research", bundle.Research));
+        return parts.Count > 0 ? string.Join(" / ", parts) : GameText.Text("common.no_cost");
     }
 
     private static string BuildRegionIntelLine(WorldRouteZoneDefinition zone)
     {
-        string extraction = zone.AllowsExtraction ? "Extractable" : "No extraction";
-        return $"T{zone.ThreatLevel} / {DescribeZoneKind(zone.Kind)} / {zone.Label} / {DescribeRegionPressure(zone)} / {DescribeRegionLootBias(zone)} / {extraction}";
+        string extraction = zone.AllowsExtraction ? GameText.Text("fullscreen.extraction.allowed") : GameText.Text("fullscreen.extraction.blocked");
+        return GameText.Format("fullscreen.region_intel", zone.ThreatLevel, DescribeZoneKind(zone.Kind), zone.Label, DescribeRegionPressure(zone), DescribeRegionLootBias(zone), extraction);
     }
 
     private static string BuildMapSupplyAdvice(WorldRouteDefinition route)
@@ -979,9 +983,9 @@ public partial class ViewportOverlay
         int highestThreat = route.Zones.Length > 0 ? route.Zones.Max(zone => zone.ThreatLevel) : 0;
         return highestThreat switch
         {
-            >= 3 => "Suggested pack: at least one medical item, one mobility tool, and one area-control consumable.",
-            2 => "Suggested pack: bring one healing item and one flexible utility consumable before entering deeper regions.",
-            _ => "Suggested pack: light supplies are acceptable, but staging a fallback heal is still safer.",
+            >= 3 => GameText.Text("fullscreen.supply.high"),
+            2 => GameText.Text("fullscreen.supply.mid"),
+            _ => GameText.Text("fullscreen.supply.low"),
         };
     }
 
@@ -989,18 +993,18 @@ public partial class ViewportOverlay
     {
         int highestThreat = route.Zones.Length > 0 ? route.Zones.Max(zone => zone.ThreatLevel) : 0;
         int extractionCount = route.Zones.Count(zone => zone.AllowsExtraction);
-        return $"Open map / Regions {route.Zones.Length} / Highest threat {highestThreat} / Extractions {extractionCount}";
+        return GameText.Format("fullscreen.map_summary", route.Zones.Length, highestThreat, extractionCount);
     }
 
     private static string DescribeZoneKind(WorldZoneKind kind)
     {
         return kind switch
         {
-            WorldZoneKind.Perimeter => "Perimeter",
-            WorldZoneKind.HighRisk => "High Risk",
-            WorldZoneKind.HighValue => "High Value",
-            WorldZoneKind.Extraction => "Extraction",
-            _ => "Open Region",
+            WorldZoneKind.Perimeter => GameText.Text("fullscreen.zone_kind.Perimeter"),
+            WorldZoneKind.HighRisk => GameText.Text("fullscreen.zone_kind.HighRisk"),
+            WorldZoneKind.HighValue => GameText.Text("fullscreen.zone_kind.HighValue"),
+            WorldZoneKind.Extraction => GameText.Text("fullscreen.zone_kind.Extraction"),
+            _ => GameText.Text("fullscreen.zone_kind.Open"),
         };
     }
 
@@ -1008,11 +1012,11 @@ public partial class ViewportOverlay
     {
         return zone.Kind switch
         {
-            WorldZoneKind.HighRisk when zone.ThreatLevel >= 3 => "dense chargers",
-            WorldZoneKind.HighRisk => "dense mixed hostiles",
-            WorldZoneKind.HighValue => "ranged watchers",
-            WorldZoneKind.Extraction => "contested exit",
-            _ => "light patrols",
+            WorldZoneKind.HighRisk when zone.ThreatLevel >= 3 => GameText.Text("fullscreen.region_pressure.highrisk_high"),
+            WorldZoneKind.HighRisk => GameText.Text("fullscreen.region_pressure.highrisk"),
+            WorldZoneKind.HighValue => GameText.Text("fullscreen.region_pressure.highvalue"),
+            WorldZoneKind.Extraction => GameText.Text("fullscreen.region_pressure.extraction"),
+            _ => GameText.Text("fullscreen.region_pressure.default"),
         };
     }
 
@@ -1020,10 +1024,10 @@ public partial class ViewportOverlay
     {
         return zone.Kind switch
         {
-            WorldZoneKind.HighRisk => "alloy-heavy recovery",
-            WorldZoneKind.HighValue => "research-heavy recovery",
-            WorldZoneKind.Extraction => "utility cache chance",
-            _ => "salvage and meds",
+            WorldZoneKind.HighRisk => GameText.Text("fullscreen.region_loot.highrisk"),
+            WorldZoneKind.HighValue => GameText.Text("fullscreen.region_loot.highvalue"),
+            WorldZoneKind.Extraction => GameText.Text("fullscreen.region_loot.extraction"),
+            _ => GameText.Text("fullscreen.region_loot.default"),
         };
     }
 
@@ -1057,17 +1061,17 @@ public partial class ViewportOverlay
     private static string ResolveWorkshopCraftBlocker(GameState state, ItemDefinition definition)
     {
         if (definition.CraftCost == null)
-            return "No fabrication recipe.";
+            return GameText.Text("fullscreen.craft.no_recipe");
 
         var stock = state.Save.Base.Resources;
         if (stock.Salvage < definition.CraftCost.Salvage
             || stock.Alloy < definition.CraftCost.Alloy
             || stock.Research < definition.CraftCost.Research)
-            return "Insufficient base resources.";
+            return GameText.Text("fullscreen.craft.no_resources");
 
         var preview = GridInventory.CreateItemRecord(definition.Id, 1);
         if (preview == null)
-            return "Recipe data is invalid.";
+            return GameText.Text("fullscreen.craft.invalid_recipe");
 
         bool hasSpace = GridInventory.PlaceItemInGrid(
             state.Save.Inventory.StashColumns,
@@ -1075,7 +1079,7 @@ public partial class ViewportOverlay
             state.Save.Inventory.StoredItems,
             preview).Placed;
 
-        return hasSpace ? "Unavailable." : "Base stash is full.";
+        return hasSpace ? GameText.Text("common.unavailable") : GameText.Text("fullscreen.craft.stash_full");
     }
 
     private static void ClearChildren(Node node)

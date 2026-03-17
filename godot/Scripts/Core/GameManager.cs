@@ -18,6 +18,8 @@ public partial class GameManager : Node
     {
         var saveManager = GetNode<SaveManager>("/root/SaveManager");
         var save = saveManager.Load();
+        save.Settings.Locale = GameText.NormalizeLocale(save.Settings.Locale);
+        GameText.SetLocale(save.Settings.Locale);
         Store.Initialize(save);
         Store.StateChanged += OnStateChanged;
         GD.Print("[GameManager] Initialized. Mode: ", Store.State.Mode);

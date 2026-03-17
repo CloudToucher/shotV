@@ -33,9 +33,9 @@ public class ItemUse
 public class ItemDefinition
 {
     public string Id { get; init; } = "";
-    public string Label { get; init; } = "";
-    public string ShortLabel { get; init; } = "";
-    public string Description { get; init; } = "";
+    public string Label => GameText.Text($"item.{Id}.label");
+    public string ShortLabel => GameText.Text($"item.{Id}.short");
+    public string Description => GameText.Text($"item.{Id}.description");
     public ItemCategory Category { get; init; }
     public ItemRarity Rarity { get; init; }
     public int Width { get; init; }
@@ -55,9 +55,6 @@ public static class ItemData
         new()
         {
             Id = "salvage-scrap",
-            Label = "废料块",
-            ShortLabel = "废料",
-            Description = "基础回收件，占位小但容易塞满背包。",
             Category = ItemCategory.Resource,
             Rarity = ItemRarity.Common,
             Width = 1,
@@ -70,9 +67,6 @@ public static class ItemData
         new()
         {
             Id = "telemetry-cache",
-            Label = "遥测数据",
-            ShortLabel = "遥测",
-            Description = "可转换为研究进度的数据缓存。",
             Category = ItemCategory.Intel,
             Rarity = ItemRarity.Rare,
             Width = 1,
@@ -85,9 +79,6 @@ public static class ItemData
         new()
         {
             Id = "alloy-plate",
-            Label = "合金板",
-            ShortLabel = "合金",
-            Description = "中型结构材料，回收后补充合金库存。",
             Category = ItemCategory.Resource,
             Rarity = ItemRarity.Uncommon,
             Width = 2,
@@ -100,9 +91,6 @@ public static class ItemData
         new()
         {
             Id = "aegis-core",
-            Label = "主核残片",
-            ShortLabel = "主核",
-            Description = "高价值主核残片，体积大但回收价值极高。",
             Category = ItemCategory.Boss,
             Rarity = ItemRarity.Legendary,
             Width = 2,
@@ -115,9 +103,6 @@ public static class ItemData
         new()
         {
             Id = "ammo-mg-ball",
-            Label = "机枪标准弹",
-            ShortLabel = "BALL",
-            Description = "机枪 BALL 备用弹药。60 发封顶一格。",
             Category = ItemCategory.Ammo,
             Rarity = ItemRarity.Common,
             Width = 1,
@@ -129,9 +114,6 @@ public static class ItemData
         new()
         {
             Id = "ammo-mg-ap",
-            Label = "机枪穿甲弹",
-            ShortLabel = "AP",
-            Description = "机枪 AP 备用弹药。60 发封顶一格。",
             Category = ItemCategory.Ammo,
             Rarity = ItemRarity.Uncommon,
             Width = 1,
@@ -143,9 +125,6 @@ public static class ItemData
         new()
         {
             Id = "ammo-mg-hp",
-            Label = "机枪高损弹",
-            ShortLabel = "HP",
-            Description = "机枪 HP 备用弹药。60 发封顶一格。",
             Category = ItemCategory.Ammo,
             Rarity = ItemRarity.Uncommon,
             Width = 1,
@@ -157,9 +136,6 @@ public static class ItemData
         new()
         {
             Id = "ammo-mg-tracer",
-            Label = "MG Tracer",
-            ShortLabel = "TRACER",
-            Description = "Machine gun TRACER reserve ammo. 60 rounds per stack.",
             Category = ItemCategory.Ammo,
             Rarity = ItemRarity.Common,
             Width = 1,
@@ -171,9 +147,6 @@ public static class ItemData
         new()
         {
             Id = "ammo-mg-bonded",
-            Label = "MG Bonded",
-            ShortLabel = "BONDED",
-            Description = "Machine gun BONDED reserve ammo. 60 rounds per stack.",
             Category = ItemCategory.Ammo,
             Rarity = ItemRarity.Uncommon,
             Width = 1,
@@ -185,9 +158,6 @@ public static class ItemData
         new()
         {
             Id = "ammo-gl-frag",
-            Label = "破片榴弹",
-            ShortLabel = "FRAG",
-            Description = "榴弹 FRAG 备用弹药。60 发封顶一格。",
             Category = ItemCategory.Ammo,
             Rarity = ItemRarity.Common,
             Width = 1,
@@ -199,9 +169,6 @@ public static class ItemData
         new()
         {
             Id = "ammo-gl-breach",
-            Label = "破甲榴弹",
-            ShortLabel = "BREACH",
-            Description = "榴弹 BREACH 备用弹药。60 发封顶一格。",
             Category = ItemCategory.Ammo,
             Rarity = ItemRarity.Rare,
             Width = 1,
@@ -213,9 +180,6 @@ public static class ItemData
         new()
         {
             Id = "ammo-gl-arc",
-            Label = "电弧榴弹",
-            ShortLabel = "ARC",
-            Description = "榴弹 ARC 备用弹药。60 发封顶一格。",
             Category = ItemCategory.Ammo,
             Rarity = ItemRarity.Rare,
             Width = 1,
@@ -227,9 +191,6 @@ public static class ItemData
         new()
         {
             Id = "ammo-gl-blast",
-            Label = "GL Blast",
-            ShortLabel = "BLAST",
-            Description = "Grenade launcher BLAST reserve ammo. 60 rounds per stack.",
             Category = ItemCategory.Ammo,
             Rarity = ItemRarity.Uncommon,
             Width = 1,
@@ -241,9 +202,6 @@ public static class ItemData
         new()
         {
             Id = "ammo-gl-flechette",
-            Label = "GL Flechette",
-            ShortLabel = "FLECH",
-            Description = "Grenade launcher FLECH reserve ammo. 60 rounds per stack.",
             Category = ItemCategory.Ammo,
             Rarity = ItemRarity.Rare,
             Width = 1,
@@ -255,9 +213,6 @@ public static class ItemData
         new()
         {
             Id = "ammo-sn-match",
-            Label = "狙击精确弹",
-            ShortLabel = "MATCH",
-            Description = "狙击 MATCH 备用弹药。60 发封顶一格。",
             Category = ItemCategory.Ammo,
             Rarity = ItemRarity.Common,
             Width = 1,
@@ -269,9 +224,6 @@ public static class ItemData
         new()
         {
             Id = "ammo-sn-sabot",
-            Label = "狙击脱壳弹",
-            ShortLabel = "SABOT",
-            Description = "狙击 SABOT 备用弹药。60 发封顶一格。",
             Category = ItemCategory.Ammo,
             Rarity = ItemRarity.Rare,
             Width = 1,
@@ -283,9 +235,6 @@ public static class ItemData
         new()
         {
             Id = "ammo-sn-exp",
-            Label = "狙击高爆弹",
-            ShortLabel = "EXP",
-            Description = "狙击 EXP 备用弹药。60 发封顶一格。",
             Category = ItemCategory.Ammo,
             Rarity = ItemRarity.Rare,
             Width = 1,
@@ -297,9 +246,6 @@ public static class ItemData
         new()
         {
             Id = "ammo-sn-overmatch",
-            Label = "SN Overmatch",
-            ShortLabel = "OVRMCH",
-            Description = "Sniper OVRMCH reserve ammo. 60 rounds per stack.",
             Category = ItemCategory.Ammo,
             Rarity = ItemRarity.Uncommon,
             Width = 1,
@@ -311,9 +257,6 @@ public static class ItemData
         new()
         {
             Id = "ammo-sn-rupture",
-            Label = "SN Rupture",
-            ShortLabel = "RUPTURE",
-            Description = "Sniper RUPTURE reserve ammo. 60 rounds per stack.",
             Category = ItemCategory.Ammo,
             Rarity = ItemRarity.Rare,
             Width = 1,
@@ -325,9 +268,6 @@ public static class ItemData
         new()
         {
             Id = "med-injector",
-            Label = "治疗针",
-            ShortLabel = "治疗针",
-            Description = "战区常见的单次应急治疗剂，可快速恢复生命。",
             Category = ItemCategory.Consumable,
             Rarity = ItemRarity.Common,
             Width = 1,
@@ -341,9 +281,6 @@ public static class ItemData
         new()
         {
             Id = "field-kit",
-            Label = "战地急救包",
-            ShortLabel = "急救包",
-            Description = "占位更大，但能一次性恢复更多生命。",
             Category = ItemCategory.Consumable,
             Rarity = ItemRarity.Uncommon,
             Width = 2,
@@ -357,9 +294,6 @@ public static class ItemData
         new()
         {
             Id = "shock-charge",
-            Label = "震爆罐",
-            ShortLabel = "震爆",
-            Description = "以自身为中心释放高压震爆，适合清开近身敌人。",
             Category = ItemCategory.Consumable,
             Rarity = ItemRarity.Rare,
             Width = 2,
@@ -373,9 +307,6 @@ public static class ItemData
         new()
         {
             Id = "dash-cell",
-            Label = "机动电池",
-            ShortLabel = "机动",
-            Description = "重置冲刺冷却并立刻补上一段机动脉冲。",
             Category = ItemCategory.Consumable,
             Rarity = ItemRarity.Rare,
             Width = 1,

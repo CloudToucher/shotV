@@ -169,7 +169,7 @@ public partial class BaseCampScene : Node2D, IOverlaySceneDataProvider
             runtime.NearbyMarkerLabel = closestLabel;
             runtime.NearbyMarkerKind = closestKind;
             runtime.PrimaryActionReady = closestId == "launch";
-            runtime.PrimaryActionHint = closestId == "launch" ? "部署至当前地图" : (closestLabel ?? "");
+            runtime.PrimaryActionHint = closestId == "launch" ? GameText.Text("basecamp.deploy_current_map") : (closestLabel ?? "");
             runtime.NearbyLootCount = 0;
         });
     }

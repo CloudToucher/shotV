@@ -10,7 +10,7 @@ namespace ShotV.UI;
 
 public partial class HUD : Control
 {
-    private static readonly string[] QuickSlotKeys = { "Z", "X", "C", "V" };
+    private static readonly string[] QuickSlotKeys = { "4", "5", "6", "7" };
 
     private PanelContainer _healthPanel = null!;
     private Label _healthLabel = null!;
@@ -70,7 +70,7 @@ public partial class HUD : Control
     {
         _healthBar.MaxValue = max;
         _healthBar.Value = Mathf.Clamp(current, 0f, max);
-        _healthLabel.Text = $"生命模组 {Mathf.CeilToInt(current)} / {Mathf.CeilToInt(max)}";
+        _healthLabel.Text = GameText.Format("hud.health", Mathf.CeilToInt(current), Mathf.CeilToInt(max));
     }
 
     public void UpdateLoadout(IReadOnlyList<WeaponDefinition> loadout, WeaponType activeWeaponId)
@@ -110,12 +110,12 @@ public partial class HUD : Control
     public void UpdateWave(int wave, int kills)
     {
         int displayThreat = Mathf.Max(1, wave);
-        _waveLabel.Text = $"区域威胁 {displayThreat:00} / 击杀 {kills}";
+        _waveLabel.Text = GameText.Format("hud.wave", displayThreat, kills);
     }
 
     public void UpdateEnemyStatus(int activeEnemies, int pendingSpawns)
     {
-        _enemyLabel.Text = $"活动目标 {activeEnemies} / 刷新压力 {pendingSpawns}";
+        _enemyLabel.Text = GameText.Format("hud.enemy", activeEnemies, pendingSpawns);
     }
 
     public void UpdateQuickSlots(GridInventoryState inventory)
@@ -127,13 +127,13 @@ public partial class HUD : Control
             var record = itemId != null ? inventory.Items.Find(item => item.Id == itemId) : null;
             bool available = record != null;
 
-            string labelText = $"{key}  空";
+            string labelText = GameText.Format("inventory.quick_button.empty", key);
             if (record != null)
             {
                 string itemLabel = ItemData.ById.TryGetValue(record.ItemId, out var definition)
                     ? definition.ShortLabel
                     : record.ItemId;
-                labelText = $"{key}  {itemLabel}{(record.Quantity > 1 ? $" x{record.Quantity}" : "")}";
+                labelText = GameText.Format("inventory.quick_button.item", key, itemLabel, GameText.QuantitySuffix(record.Quantity));
             }
 
             _quickSlotLabels[index].Text = labelText;
@@ -148,7 +148,9 @@ public partial class HUD : Control
 
     public void UpdateDashCooldown(float ratio)
     {
-        _dashLabel.Text = ratio > 0.01f ? $"冲刺链路 {ratio:P0}" : "冲刺链路 READY";
+        _dashLabel.Text = ratio > 0.01f
+            ? GameText.Format("hud.dash", ratio)
+            : GameText.Text("hud.dash_ready");
     }
 
     public void ShowHint(string text, float duration = 3f)
@@ -161,7 +163,7 @@ public partial class HUD : Control
     public void ShowBossHealth(string label, float current, float max, int phase)
     {
         _bossPanel.Visible = true;
-        _bossLabel.Text = $"区域主核 {label} / 阶段 {phase}";
+        _bossLabel.Text = GameText.Format("hud.boss", label, phase);
         _bossBar.MaxValue = max;
         _bossBar.Value = Mathf.Clamp(current, 0f, max);
     }
@@ -332,12 +334,12 @@ public partial class HUD : Control
         _centerPanel.AddChild(centerBody);
 
         _centerTitle = CreateLabel(28, Palette.UiText, true);
-        _centerTitle.Text = "战术链路中断";
+        _centerTitle.Text = GameText.Text("hud.center_title");
         _centerTitle.HorizontalAlignment = HorizontalAlignment.Center;
         centerBody.AddChild(_centerTitle);
 
         _centerHint = CreateLabel(13, Palette.UiMuted, false);
-        _centerHint.Text = "返回基地完成结算，然后重新部署。";
+        _centerHint.Text = GameText.Text("hud.center_hint");
         _centerHint.HorizontalAlignment = HorizontalAlignment.Center;
         centerBody.AddChild(_centerHint);
 
@@ -355,7 +357,9 @@ public partial class HUD : Control
             WeaponDefinition? weapon = index < _loadout.Count ? _loadout[index] : null;
             bool active = weapon != null && weapon.Id == _activeWeaponId;
 
-            _weaponLabels[index].Text = weapon != null ? $"{index + 1}  {weapon.Label}" : $"{index + 1}  空";
+            _weaponLabels[index].Text = weapon != null
+                ? $"{index + 1}  {weapon.Label}"
+                : $"{index + 1}  {GameText.Text("common.empty")}";
             _weaponLabels[index].AddThemeColorOverride("font_color", active ? Palette.UiText : Palette.UiMuted);
             _weaponCards[index].AddThemeStyleboxOverride("panel", CreateCardStyle(
                 active ? new Color(Palette.UiActive, 0.94f) : new Color(Palette.UiPanel, 0.88f),
@@ -377,7 +381,7 @@ public partial class HUD : Control
 
             string labelText = $"{index + 1}  {weapon.Label} {runtime.Magazine}/{runtime.MagazineCapacity}+{runtime.Reserve} [{runtime.AmmoLabel}]";
             if (_reloadWeaponId == weapon.Id)
-                labelText += $" RELOAD {Mathf.RoundToInt(_reloadProgress * 100f)}%";
+                labelText += $" {GameText.Format("hud.reload", Mathf.RoundToInt(_reloadProgress * 100f))}";
 
             _weaponLabels[index].Text = labelText;
         }

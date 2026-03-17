@@ -14,7 +14,7 @@ public class HostileColors
 public class HostileDefinition
 {
     public HostileType Type { get; init; }
-    public string Label { get; init; } = "";
+    public string Label => GameText.Text($"hostile.{Type}.label");
     public float Radius { get; init; }
     public float MaxHealth { get; init; }
     public float MoveSpeed { get; init; }
@@ -45,7 +45,6 @@ public static class HostileData
             HostileType.Melee, new HostileDefinition
             {
                 Type = HostileType.Melee,
-                Label = "追猎体",
                 Radius = 18f,
                 MaxHealth = 34f,
                 MoveSpeed = 142f,
@@ -67,7 +66,6 @@ public static class HostileData
             HostileType.Ranged, new HostileDefinition
             {
                 Type = HostileType.Ranged,
-                Label = "射击体",
                 Radius = 17f,
                 MaxHealth = 30f,
                 MoveSpeed = 96f,
@@ -95,7 +93,6 @@ public static class HostileData
             HostileType.Charger, new HostileDefinition
             {
                 Type = HostileType.Charger,
-                Label = "冲锋体",
                 Radius = 20f,
                 MaxHealth = 48f,
                 MoveSpeed = 94f,
@@ -122,7 +119,6 @@ public static class HostileData
             HostileType.Boss, new HostileDefinition
             {
                 Type = HostileType.Boss,
-                Label = "神盾主核",
                 Radius = 34f,
                 MaxHealth = 520f,
                 MoveSpeed = 82f,

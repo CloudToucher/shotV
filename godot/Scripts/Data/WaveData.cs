@@ -39,10 +39,10 @@ public static class WaveData
 
     public static string BuildWaveHint(int wave)
     {
-        if (wave >= 5) return "区域主核正在接管战场";
-        if (wave < 2) return "追猎体开始从外围压近";
-        if (wave < 3) return "射击体加入火力线";
-        return "冲锋体开始压迫位移节奏";
+        if (wave >= 5) return GameText.Text("wave.boss");
+        if (wave < 2) return GameText.Text("wave.melee");
+        if (wave < 3) return GameText.Text("wave.ranged");
+        return GameText.Text("wave.charger");
     }
 
     private static void PushOrders(List<SpawnOrder> target, int count, HostileType type)

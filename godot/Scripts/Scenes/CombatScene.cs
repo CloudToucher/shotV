@@ -234,11 +234,11 @@ public partial class CombatScene : Node2D, IPlayerControllerCallbacks, IEncounte
         var pickup = LootManager.TryPickupLoot(drop, run.Inventory, run.GroundLoot);
         if (pickup.PickedUp)
         {
-            _hud?.ShowHint($"拾取 {(ItemData.ById.TryGetValue(drop.Item.ItemId, out var d) ? d.Label : drop.Item.ItemId)}", 1.5f);
+            _hud?.ShowHint(GameText.Format("combat.pickup", ItemData.ById.TryGetValue(drop.Item.ItemId, out var d) ? d.Label : drop.Item.ItemId), 1.5f);
             _vfx.SpawnRing(drop.X, drop.Y, 8, 32, 0.18f, Palette.MinimapMarker, 2.5f);
             return true;
         }
-        _hud?.ShowHint("背包已满", 1.5f);
+        _hud?.ShowHint(GameText.Text("combat.inventory_full"), 1.5f);
         return false;
     }
 
@@ -254,7 +254,7 @@ public partial class CombatScene : Node2D, IPlayerControllerCallbacks, IEncounte
         if (store == null) return;
         _syncTimer = SyncInterval;
         store.MarkRunOutcome(RunResolutionOutcome.Extracted);
-        _hud?.ShowHint("撤离校验完成，等待结算确认", 3f);
+        _hud?.ShowHint(GameText.Text("combat.extraction_ready"), 3f);
         GD.Print("[CombatScene] Extraction triggered.");
     }
 
@@ -315,7 +315,7 @@ public partial class CombatScene : Node2D, IPlayerControllerCallbacks, IEncounte
         _downHandled = true;
         var store = GameManager.Instance?.Store;
         store?.MarkRunOutcome(RunResolutionOutcome.Down);
-        _hud?.ShowHint("行动失败", 4f);
+        _hud?.ShowHint(GameText.Text("combat.down"), 4f);
         _hud?.SetPlayerDown(true);
         GD.Print("[CombatScene] Player downed.");
     }
@@ -361,7 +361,7 @@ public partial class CombatScene : Node2D, IPlayerControllerCallbacks, IEncounte
         var ammo = WeaponData.GetAmmo(weapon, weaponState.AmmoTypeId);
         if (weaponState.Magazine <= 0)
         {
-            _hud?.ShowHint($"{weapon.Label} 空仓，按 R 换弹", 1.25f);
+            _hud?.ShowHint(GameText.Format("combat.weapon_empty", weapon.Label), 1.25f);
             return false;
         }
 
@@ -469,7 +469,7 @@ public partial class CombatScene : Node2D, IPlayerControllerCallbacks, IEncounte
         }
         _vfx.SpawnRing(enemy.X, enemy.Y, 18, 92, 0.28f, Palette.Warning, 4f);
         AddShake(0.18f);
-        _hud?.ShowHint($"{enemy.Definition.Label} 出现", 3f);
+        _hud?.ShowHint(GameText.Format("combat.enemy_spawned", enemy.Definition.Label), 3f);
     }
 
     public void OnBossPhaseShift(EnemyActor enemy)
@@ -478,7 +478,7 @@ public partial class CombatScene : Node2D, IPlayerControllerCallbacks, IEncounte
         if (run != null) run.Map.Boss.Phase = enemy.Phase;
         _vfx.SpawnRing(enemy.X, enemy.Y, 24, 118, 0.34f, Palette.Danger, 4f);
         AddShake(0.32f);
-        _hud?.ShowHint("主核进入强化阶段", 2.5f);
+        _hud?.ShowHint(GameText.Text("combat.boss_phase"), 2.5f);
     }
 
     public void OnBossAttack(BossPattern pattern, EnemyActor enemy, float? targetAngle)
@@ -555,7 +555,7 @@ public partial class CombatScene : Node2D, IPlayerControllerCallbacks, IEncounte
         _vfx.SpawnRing(enemy.X, enemy.Y, 24, 144, 0.42f, Palette.Accent, 4f);
         _vfx.SpawnParticles(enemy.X, enemy.Y, 40, Palette.AccentSoft);
         AddShake(0.4f);
-        _hud?.ShowHint($"{enemy.Definition.Label} 已被消灭", 4f);
+        _hud?.ShowHint(GameText.Format("combat.enemy_defeated", enemy.Definition.Label), 4f);
     }
 
     private void SyncHudState(RunState? run)
@@ -587,12 +587,12 @@ public partial class CombatScene : Node2D, IPlayerControllerCallbacks, IEncounte
         if (run.Status == RunStateStatus.AwaitingSettlement)
         {
             nearbyMarkerId = "settlement";
-            nearbyMarkerLabel = "结算确认";
+            nearbyMarkerLabel = GameText.Text("combat.settlement_label");
             nearbyMarkerKind = MarkerKind.Extraction;
             primaryReady = true;
             hint = run.PendingOutcome == RunResolutionOutcome.Down
-                ? "战术链路中断，确认结算后返回基地。"
-                : "行动已完成，确认结算后返回基地。";
+                ? GameText.Text("combat.awaiting_settlement_down")
+                : GameText.Text("combat.awaiting_settlement_success");
         }
         else
         {
@@ -616,16 +616,16 @@ public partial class CombatScene : Node2D, IPlayerControllerCallbacks, IEncounte
             else if (exitMarker == null)
             {
                 hint = currentZone != null
-                    ? $"{currentZone.Label} / 威胁 {currentZone.ThreatLevel} / 保持机动并留意巡游敌群。"
-                    : "在开放区域内探索并保持机动。";
+                    ? GameText.Format("combat.hint.current_zone", currentZone.Label, currentZone.ThreatLevel)
+                    : GameText.Text("combat.hint.open_area");
             }
             else if (canExtract)
             {
-                hint = "执行撤离并进入结算。";
+                hint = GameText.Text("combat.extract_and_settle");
             }
             else
             {
-                hint = "清空当前区域后才能操作出口。";
+                hint = GameText.Text("combat.clear_zone_for_exit");
             }
         }
 
@@ -841,8 +841,8 @@ public partial class CombatScene : Node2D, IPlayerControllerCallbacks, IEncounte
         {
             string? status = armorGap switch
             {
-                0 => "PEN",
-                >= 2 => "ARMOR",
+                0 => GameText.Text("combat.status.pen"),
+                >= 2 => GameText.Text("combat.status.armor"),
                 _ => null,
             };
 
@@ -854,7 +854,7 @@ public partial class CombatScene : Node2D, IPlayerControllerCallbacks, IEncounte
         }
 
         if (hitIndex == 1 && ammo.PierceCount > 0)
-            _dmgText.SpawnStatusText(hit.PointX, hit.PointY - 12f, "PIERCE", feedbackColor);
+            _dmgText.SpawnStatusText(hit.PointX, hit.PointY - 12f, GameText.Text("combat.status.pierce"), feedbackColor);
     }
 
     private float ResolveShotSpreadDegrees(WeaponDefinition weapon)

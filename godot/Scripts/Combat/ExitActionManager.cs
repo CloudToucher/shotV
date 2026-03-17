@@ -104,9 +104,9 @@ public class ExitActionManager
         int pct = Mathf.RoundToInt(progress * 100f);
         if (_state.Phase == ExitActionPhase.Charging)
             return _state.Kind == ExitActionKind.Advance
-                ? $"推进校验中 {pct}%"
-                : $"撤离校验中 {pct}%";
-        return $"闸门开启中 {pct}%";
+                ? GameText.Format("exit.progress.advance", pct)
+                : GameText.Format("exit.progress.extract", pct);
+        return GameText.Format("exit.progress.opening", pct);
     }
 
     private float GetGateOpenProgress()

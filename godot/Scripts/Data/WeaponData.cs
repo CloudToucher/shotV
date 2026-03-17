@@ -7,9 +7,13 @@ namespace ShotV.Data;
 public class WeaponAmmoDefinition
 {
     public string Id { get; init; } = "";
-    public string Label { get; init; } = "";
-    public string Hint { get; init; } = "";
     public string ReserveItemId { get; init; } = "";
+    public string Label => string.IsNullOrWhiteSpace(ReserveItemId)
+        ? Id
+        : GameText.Text($"ammo.{ReserveItemId}.label");
+    public string Hint => string.IsNullOrWhiteSpace(ReserveItemId)
+        ? string.Empty
+        : GameText.Text($"ammo.{ReserveItemId}.hint");
     public float Damage { get; init; }
     public int ArmorPenetration { get; init; }
     public int PierceCount { get; init; }
@@ -22,8 +26,8 @@ public class WeaponDefinition
 {
     public WeaponSlot Slot { get; init; }
     public WeaponType Id { get; init; }
-    public string Label { get; init; } = "";
-    public string Hint { get; init; } = "";
+    public string Label => GameText.Text($"weapon.{Id}.label");
+    public string Hint => GameText.Text($"weapon.{Id}.hint");
     public float Cooldown { get; init; }
     public float Range { get; init; }
     public float EffectWidth { get; init; }
@@ -48,8 +52,6 @@ public static class WeaponData
     {
         Slot = WeaponSlot.Slot1,
         Id = WeaponType.MachineGun,
-        Label = "机枪",
-        Hint = "30 发弹匣，中距离压制主武器。",
         Cooldown = 0.085f,
         Range = 560f,
         EffectWidth = 4.5f,
@@ -69,8 +71,6 @@ public static class WeaponData
             new WeaponAmmoDefinition
             {
                 Id = "ball",
-                Label = "BALL",
-                Hint = "标准弹，稳定压制。",
                 ReserveItemId = "ammo-mg-ball",
                 Damage = 11f,
                 ArmorPenetration = 0,
@@ -82,8 +82,6 @@ public static class WeaponData
             new WeaponAmmoDefinition
             {
                 Id = "ap",
-                Label = "AP",
-                Hint = "穿甲弹，对中甲更稳。",
                 ReserveItemId = "ammo-mg-ap",
                 Damage = 9f,
                 ArmorPenetration = 2,
@@ -95,8 +93,6 @@ public static class WeaponData
             new WeaponAmmoDefinition
             {
                 Id = "hp",
-                Label = "HP",
-                Hint = "高损弹，对轻甲更凶。",
                 ReserveItemId = "ammo-mg-hp",
                 Damage = 15f,
                 ArmorPenetration = 1,
@@ -108,8 +104,6 @@ public static class WeaponData
             new WeaponAmmoDefinition
             {
                 Id = "tracer",
-                Label = "TRACER",
-                Hint = "Visible suppressive belt with lower armor performance but better pass-through.",
                 ReserveItemId = "ammo-mg-tracer",
                 Damage = 10f,
                 ArmorPenetration = 0,
@@ -121,8 +115,6 @@ public static class WeaponData
             new WeaponAmmoDefinition
             {
                 Id = "bonded",
-                Label = "BONDED",
-                Hint = "Bonded core rounds tuned for mixed armor and soft targets.",
                 ReserveItemId = "ammo-mg-bonded",
                 Damage = 12f,
                 ArmorPenetration = 1,
@@ -138,8 +130,6 @@ public static class WeaponData
     {
         Slot = WeaponSlot.Slot2,
         Id = WeaponType.Grenade,
-        Label = "榴弹",
-        Hint = "6 发弹匣的榴弹发射器，适合轰散密集敌群。",
         Cooldown = 0.42f,
         Range = 360f,
         SplashRadius = 66f,
@@ -158,8 +148,6 @@ public static class WeaponData
             new WeaponAmmoDefinition
             {
                 Id = "frag",
-                Label = "FRAG",
-                Hint = "标准破片榴弹。",
                 ReserveItemId = "ammo-gl-frag",
                 Damage = 34f,
                 ArmorPenetration = 1,
@@ -171,8 +159,6 @@ public static class WeaponData
             new WeaponAmmoDefinition
             {
                 Id = "breach",
-                Label = "BREACH",
-                Hint = "破甲榴弹，对重型目标更强。",
                 ReserveItemId = "ammo-gl-breach",
                 Damage = 46f,
                 ArmorPenetration = 3,
@@ -184,8 +170,6 @@ public static class WeaponData
             new WeaponAmmoDefinition
             {
                 Id = "arc",
-                Label = "ARC",
-                Hint = "电弧榴弹，覆盖更广。",
                 ReserveItemId = "ammo-gl-arc",
                 Damage = 28f,
                 ArmorPenetration = 0,
@@ -197,8 +181,6 @@ public static class WeaponData
             new WeaponAmmoDefinition
             {
                 Id = "blast",
-                Label = "BLAST",
-                Hint = "High-yield grenade shells with heavier terminal damage and short fragmentation lanes.",
                 ReserveItemId = "ammo-gl-blast",
                 Damage = 42f,
                 ArmorPenetration = 0,
@@ -210,8 +192,6 @@ public static class WeaponData
             new WeaponAmmoDefinition
             {
                 Id = "flechette",
-                Label = "FLECH",
-                Hint = "Anti-personnel dart payload with broad hit chaining through clustered targets.",
                 ReserveItemId = "ammo-gl-flechette",
                 Damage = 26f,
                 ArmorPenetration = 2,
@@ -227,8 +207,6 @@ public static class WeaponData
     {
         Slot = WeaponSlot.Slot3,
         Id = WeaponType.Sniper,
-        Label = "狙击",
-        Hint = "5 发弹匣，远距离点杀与穿透主武器。",
         Cooldown = 0.72f,
         Range = 100000f,
         EffectWidth = 9f,
@@ -248,8 +226,6 @@ public static class WeaponData
             new WeaponAmmoDefinition
             {
                 Id = "match",
-                Label = "MATCH",
-                Hint = "标准精确弹。",
                 ReserveItemId = "ammo-sn-match",
                 Damage = 50f,
                 ArmorPenetration = 1,
@@ -261,8 +237,6 @@ public static class WeaponData
             new WeaponAmmoDefinition
             {
                 Id = "sabot",
-                Label = "SABOT",
-                Hint = "脱壳穿甲弹，贯穿更强。",
                 ReserveItemId = "ammo-sn-sabot",
                 Damage = 42f,
                 ArmorPenetration = 4,
@@ -274,8 +248,6 @@ public static class WeaponData
             new WeaponAmmoDefinition
             {
                 Id = "exp",
-                Label = "EXP",
-                Hint = "高爆狙击弹，终端伤害更高。",
                 ReserveItemId = "ammo-sn-exp",
                 Damage = 68f,
                 ArmorPenetration = 0,
@@ -287,8 +259,6 @@ public static class WeaponData
             new WeaponAmmoDefinition
             {
                 Id = "overmatch",
-                Label = "OVRMCH",
-                Hint = "Heavy sniper cartridge that balances armor defeat with multi-target carry-through.",
                 ReserveItemId = "ammo-sn-overmatch",
                 Damage = 48f,
                 ArmorPenetration = 2,
@@ -300,8 +270,6 @@ public static class WeaponData
             new WeaponAmmoDefinition
             {
                 Id = "rupture",
-                Label = "RUPTURE",
-                Hint = "Soft-target kill shot with extreme terminal damage and minimal penetration.",
                 ReserveItemId = "ammo-sn-rupture",
                 Damage = 60f,
                 ArmorPenetration = 1,
