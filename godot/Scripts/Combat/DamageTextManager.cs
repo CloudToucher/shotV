@@ -94,7 +94,7 @@ public partial class DamageTextManager : Node2D
             float t = e.Age / e.Duration;
             float alpha = t < 0.15f ? t / 0.15f : 1f - MathUtil.EaseOutCubic(Mathf.Max(0f, (t - 0.55f) / 0.45f));
             float scale = e.Scale * (1f + (1f - t) * 0.15f);
-            int fontSize = Mathf.RoundToInt(14f * scale);
+            int fontSize = UiScale.Font(Mathf.RoundToInt(14f * scale));
             var pos = new Vector2(e.X, e.Y);
 
             // Shadow

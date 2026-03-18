@@ -289,7 +289,7 @@ public static class GameText
             ["fullscreen.command.select_map"] = "选择地图",
             ["fullscreen.launch.regional_pressure"] = "区域压力",
             ["fullscreen.launch.pressure_value"] = "最高威胁 {0} / 区域 {1}",
-            ["fullscreen.launch.high_risk_hint"] = "高风险地图：部署前必须至少携带一件治疗消耗品。",
+            ["fullscreen.launch.high_risk_hint"] = "高风险地图：建议部署前至少携带一件治疗消耗品。",
             ["fullscreen.launch.low_risk_hint"] = "低风险地图允许空部署包，但不建议这样做。",
             ["fullscreen.launch.deployment_status"] = "部署状态",
             ["fullscreen.launch.pack_summary"] = "背包概要",

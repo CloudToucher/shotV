@@ -458,7 +458,7 @@ public partial class ViewportOverlay : CanvasLayer
             MouseFilter = Control.MouseFilterEnum.Ignore,
         };
         label.AddThemeColorOverride("font_color", color);
-        label.AddThemeFontSizeOverride("font_size", fontSize);
+        label.AddThemeFontSizeOverride("font_size", UiScale.Font(fontSize));
         if (bold)
             label.AddThemeConstantOverride("outline_size", 0);
         if (letterSpacing != 0f)
@@ -474,7 +474,7 @@ public partial class ViewportOverlay : CanvasLayer
             CustomMinimumSize = new Vector2(primary ? 180f : 116f, 0f),
             FocusMode = Control.FocusModeEnum.None,
         };
-        button.AddThemeFontSizeOverride("font_size", 12);
+        button.AddThemeFontSizeOverride("font_size", UiScale.Font(12));
         button.AddThemeColorOverride("font_color", Palette.UiText);
         button.AddThemeStyleboxOverride("normal", CreateButtonStyle(primary, 0.92f));
         button.AddThemeStyleboxOverride("hover", CreateButtonStyle(primary, 1f));

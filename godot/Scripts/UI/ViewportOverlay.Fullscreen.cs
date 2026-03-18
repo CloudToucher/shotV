@@ -30,6 +30,7 @@ public partial class ViewportOverlay
     private Label _panelTitle = null!;
     private Label _panelMeta = null!;
     private HBoxContainer _panelTabs = null!;
+    private ScrollContainer _panelContentScroll = null!;
     private Control _panelContentContainer = null!;
     private Label _panelFooter = null!;
     private Button _panelPrimaryButton = null!;
@@ -235,10 +236,19 @@ public partial class ViewportOverlay
         _panelTabs.AddThemeConstantOverride("separation", 8);
         body.AddChild(_panelTabs);
 
+        _panelContentScroll = new ScrollContainer
+        {
+            HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled,
+            VerticalScrollMode = ScrollContainer.ScrollMode.Auto,
+            SizeFlagsVertical = Control.SizeFlags.ExpandFill,
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+        };
+        body.AddChild(_panelContentScroll);
+
         _panelContentContainer = new VBoxContainer();
         _panelContentContainer.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
         _panelContentContainer.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
-        body.AddChild(_panelContentContainer);
+        _panelContentScroll.AddChild(_panelContentContainer);
 
         var footerRow = new HBoxContainer();
         footerRow.AddThemeConstantOverride("separation", 10);
@@ -439,7 +449,7 @@ public partial class ViewportOverlay
                 BuildCommandPanel(state.Save.World.SelectedRouteId);
                 break;
             case ScenePanelMode.Launch:
-                BuildLaunchPanel(state, selectedRoute, state.Runtime.PrimaryActionReady);
+                BuildLaunchPanel(state, selectedRoute);
                 break;
             case ScenePanelMode.CombatInventory:
                 if (activeRun != null)
@@ -655,7 +665,7 @@ public partial class ViewportOverlay
         }
     }
 
-    private void BuildLaunchPanel(GameState state, WorldRouteDefinition selectedRoute, bool deploymentReady)
+    private void BuildLaunchPanel(GameState state, WorldRouteDefinition selectedRoute)
     {
         var inventory = state.Save.Inventory;
         var readiness = GameManager.Instance?.Store?.EvaluateDeploymentReadiness() ?? new DeploymentReadinessResult
@@ -666,44 +676,36 @@ public partial class ViewportOverlay
             CapacityCells = inventory.DeploymentPack.Columns * inventory.DeploymentPack.Rows,
         };
 
-        var topScroll = new ScrollContainer
-        {
-            HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled,
-            VerticalScrollMode = ScrollContainer.ScrollMode.Auto,
-            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
-            SizeFlagsVertical = Control.SizeFlags.Fill,
-            CustomMinimumSize = new Vector2(0, 130f)
-        };
-        _panelContentContainer.AddChild(topScroll);
+        bool compact = GetViewport().GetVisibleRect().Size.X < 1400f;
+        BoxContainer split = compact ? new VBoxContainer() : new HBoxContainer();
+        split.AddThemeConstantOverride("separation", 20);
+        split.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+        split.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
+        _panelContentContainer.AddChild(split);
 
-        var topList = new VBoxContainer();
-        topList.AddThemeConstantOverride("separation", 12);
-        topList.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
-        topScroll.AddChild(topList);
+        var leftColumn = new VBoxContainer();
+        leftColumn.AddThemeConstantOverride("separation", 12);
+        leftColumn.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
+        if (!compact)
+            leftColumn.CustomMinimumSize = new Vector2(380f, 0f);
+        split.AddChild(leftColumn);
 
-        var infoGrid = new GridContainer
-        {
-            Columns = 2,
-            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
-        };
-        infoGrid.AddThemeConstantOverride("h_separation", 12);
-        infoGrid.AddThemeConstantOverride("v_separation", 12);
-        topList.AddChild(infoGrid);
+        var rightColumn = new VBoxContainer();
+        rightColumn.AddThemeConstantOverride("separation", 12);
+        rightColumn.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+        rightColumn.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
+        split.AddChild(rightColumn);
 
-        AddCardTo(infoGrid, GameText.Text("fullscreen.card.selected_map"), selectedRoute.Label, BuildMapSummary(selectedRoute));
-        AddCardTo(infoGrid, GameText.Text("fullscreen.launch.regional_pressure"), GameText.Format("fullscreen.launch.pressure_value", readiness.HighestThreat, selectedRoute.Zones.Length), readiness.HighestThreat >= 3
+        AddCardTo(leftColumn, GameText.Text("fullscreen.card.selected_map"), selectedRoute.Label, BuildMapSummary(selectedRoute));
+        AddCardTo(leftColumn, GameText.Text("fullscreen.launch.regional_pressure"), GameText.Format("fullscreen.launch.pressure_value", readiness.HighestThreat, selectedRoute.Zones.Length), readiness.HighestThreat >= 3
             ? GameText.Text("fullscreen.launch.high_risk_hint")
             : GameText.Text("fullscreen.launch.low_risk_hint"));
-        AddCardTo(infoGrid, GameText.Text("fullscreen.launch.deployment_status"), readiness.StatusLabel, readiness.Detail);
-        AddCardTo(infoGrid, GameText.Text("fullscreen.launch.pack_summary"),
+        AddCardTo(leftColumn, GameText.Text("fullscreen.launch.deployment_status"), readiness.StatusLabel, readiness.Detail);
+        AddCardTo(leftColumn, GameText.Text("fullscreen.launch.pack_summary"),
             GameText.Format("fullscreen.launch.pack_summary_value", readiness.StagedUnits, readiness.OccupiedCells, Mathf.Max(1, readiness.CapacityCells)),
             GameText.Format("fullscreen.launch.pack_summary_meta", readiness.HealingUnits, readiness.MobilityUnits, readiness.UtilityUnits));
 
-        var packLabel = CreateLabel(14, Palette.UiText, true, 0.4f, false);
-        packLabel.Text = GameText.Text("fullscreen.launch.pack_label");
-        _panelContentContainer.AddChild(packLabel);
-
-        BuildLaunchInventoryContent(_panelContentContainer, inventory);
+        BuildLaunchInventoryContent(rightColumn, inventory, readiness.CanDeploy);
     }
 
     private void BuildCombatInventoryPanel(RunState activeRun, WorldRouteDefinition currentRoute, RunZoneState? currentZone)
@@ -714,9 +716,11 @@ public partial class ViewportOverlay
 
     private void UpdatePanelActions(GameState state, RunState? activeRun, ScenePanelMode mode)
     {
+        _panelFooter.Visible = true;
         _panelSecondaryButton.Visible = true;
         _panelSecondaryButton.Text = GameText.Text("common.close");
         _panelSecondaryButton.Disabled = false;
+        _panelPrimaryButton.Visible = true;
 
         switch (mode)
         {
@@ -733,9 +737,7 @@ public partial class ViewportOverlay
                 _panelPrimaryButton.Disabled = false;
                 break;
             case ScenePanelMode.Launch:
-                _panelPrimaryButton.Text = GameText.Text("fullscreen.action.deploy");
-                _panelPrimaryButton.Disabled = !state.Runtime.PrimaryActionReady
-                    || !(GameManager.Instance?.Store?.EvaluateDeploymentReadiness().CanDeploy ?? true);
+                _panelPrimaryButton.Visible = false;
                 break;
             case ScenePanelMode.CombatInventory:
                 _panelPrimaryButton.Text = GameText.Text("fullscreen.action.sort_pack");
@@ -772,8 +774,7 @@ public partial class ViewportOverlay
                 store.SelectNextWorldMap();
                 break;
             case ScenePanelMode.Launch:
-                if (state.Runtime.PrimaryActionReady)
-                    store.DeployCombat();
+                store.DeployCombat(true);
                 break;
             case ScenePanelMode.CombatInventory:
                 store.AutoArrangeActiveRunInventory();
@@ -855,7 +856,7 @@ public partial class ViewportOverlay
             CustomMinimumSize = new Vector2(112f, 0f),
             FocusMode = Control.FocusModeEnum.None,
         };
-        button.AddThemeFontSizeOverride("font_size", 12);
+        button.AddThemeFontSizeOverride("font_size", UiScale.Font(12));
         button.AddThemeColorOverride("font_color", Palette.UiText);
         button.AddThemeStyleboxOverride("normal", CreateButtonStyle(active, active ? 1f : 0.84f));
         button.AddThemeStyleboxOverride("hover", CreateButtonStyle(true, 1f));
@@ -872,7 +873,7 @@ public partial class ViewportOverlay
             Disabled = !enabled,
             CustomMinimumSize = new Vector2(96f, 0f),
         };
-        button.AddThemeFontSizeOverride("font_size", 11);
+        button.AddThemeFontSizeOverride("font_size", UiScale.Font(11));
         button.AddThemeColorOverride("font_color", Palette.UiText);
         button.AddThemeStyleboxOverride("normal", CreateButtonStyle(enabled, enabled ? 0.86f : 0.44f));
         button.AddThemeStyleboxOverride("hover", CreateButtonStyle(true, 1f));

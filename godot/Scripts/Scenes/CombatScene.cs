@@ -3,6 +3,7 @@ using Godot;
 using ShotV.Combat;
 using ShotV.Core;
 using ShotV.Data;
+using ShotV.Inventory;
 using ShotV.State;
 using ShotV.UI;
 using ShotV.World;
@@ -11,6 +12,13 @@ namespace ShotV.Scenes;
 
 public partial class CombatScene : Node2D, IPlayerControllerCallbacks, IEncounterCallbacks, IOverlaySceneDataProvider
 {
+    private sealed class AmmoWheelOption
+    {
+        public WeaponAmmoDefinition Ammo { get; init; } = new();
+        public int Reserve { get; init; }
+        public bool IsCurrent { get; init; }
+    }
+
     private PlayerAvatar _player = null!;
     private CombatRenderer _renderer = null!;
     private VfxManager _vfx = null!;
@@ -34,7 +42,15 @@ public partial class CombatScene : Node2D, IPlayerControllerCallbacks, IEncounte
     private bool _downHandled;
     private bool _reloadHoldActive;
     private float _reloadHoldTimer;
+    private bool _ammoWheelActive;
+    private int _ammoWheelHoveredIndex = -1;
+    private string _ammoWheelCurrentAmmoId = "";
+    private Vector2 _ammoWheelPointerWorld;
+    private readonly List<AmmoWheelOption> _ammoWheelOptions = new();
     private const float SyncInterval = 0.2f;
+    private const float AmmoWheelOuterRadius = 88f;
+    private const float AmmoWheelInnerRadius = 32f;
+    private const float AmmoWheelDeadZone = 22f;
 
     public override void _Ready()
     {
@@ -96,6 +112,7 @@ public partial class CombatScene : Node2D, IPlayerControllerCallbacks, IEncounte
         _downHandled = false;
         _reloadHoldActive = false;
         _reloadHoldTimer = 0f;
+        CloseAmmoWheel();
         _player.SetReticleBloom(0f);
 
         float startHealth = run?.Player.Health ?? CombatConstants.PlayerMaxHealth;
@@ -113,6 +130,12 @@ public partial class CombatScene : Node2D, IPlayerControllerCallbacks, IEncounte
         if (run != null)
             SyncCurrentRegion(run);
         UpdateCombatRuntime(run);
+    }
+
+    public override void _Draw()
+    {
+        if (_ammoWheelActive)
+            DrawAmmoWheel();
     }
 
     public override void _Process(double delta)
@@ -136,13 +159,13 @@ public partial class CombatScene : Node2D, IPlayerControllerCallbacks, IEncounte
             (Input.IsActionPressed("move_right") ? 1f : 0f) - (Input.IsActionPressed("move_left") ? 1f : 0f),
             (Input.IsActionPressed("move_down") ? 1f : 0f) - (Input.IsActionPressed("move_up") ? 1f : 0f));
         bool dashPressed = !fullscreenUi && Input.IsActionJustPressed("dash");
-        bool shootHeld = !fullscreenUi && Input.IsMouseButtonPressed(MouseButton.Left);
+        bool shootHeld = !fullscreenUi && !_ammoWheelActive && Input.IsMouseButtonPressed(MouseButton.Left);
         var mousePos = GetGlobalMousePosition();
         bool hasPointer = true;
         bool interactPressed = !fullscreenUi && Input.IsActionJustPressed("interact");
 
         WeaponSlot? weaponSwitch = null;
-        if (!fullscreenUi)
+        if (!fullscreenUi && !_ammoWheelActive)
         {
             if (Input.IsActionJustPressed("weapon_1")) weaponSwitch = WeaponSlot.Slot1;
             else if (Input.IsActionJustPressed("weapon_2")) weaponSwitch = WeaponSlot.Slot2;
@@ -156,7 +179,7 @@ public partial class CombatScene : Node2D, IPlayerControllerCallbacks, IEncounte
         if (!string.IsNullOrWhiteSpace(controllerHint))
             _hud?.ShowHint(controllerHint!, 1.6f);
 
-        HandleReloadInput(dt, canControl, fullscreenUi, run);
+        HandleReloadInput(dt, canControl, fullscreenUi, run, mousePos);
         if (canControl)
             _controller.HandleInput(moveIntent, dashPressed, shootHeld, hasPointer, mousePos, weaponSwitch, _player, _layout.Bounds, this);
         else
@@ -206,6 +229,9 @@ public partial class CombatScene : Node2D, IPlayerControllerCallbacks, IEncounte
         if (run != null)
             _renderer.BindGroundLoot(run.GroundLoot);
         _renderer.Refresh();
+
+        if (_ammoWheelActive)
+            QueueRedraw();
 
         // Quick slots
         if (canControl && _encounter.State == EncounterState.Active)
@@ -774,6 +800,7 @@ public partial class CombatScene : Node2D, IPlayerControllerCallbacks, IEncounte
         {
             _reloadHoldActive = false;
             _reloadHoldTimer = 0f;
+            CloseAmmoWheel();
             return;
         }
 
@@ -781,6 +808,7 @@ public partial class CombatScene : Node2D, IPlayerControllerCallbacks, IEncounte
         {
             _reloadHoldActive = true;
             _reloadHoldTimer = 0f;
+            _ammoWheelPointerWorld = GetGlobalMousePosition();
         }
 
         if (!_reloadHoldActive)
@@ -789,18 +817,199 @@ public partial class CombatScene : Node2D, IPlayerControllerCallbacks, IEncounte
         if (reloadHeld)
         {
             _reloadHoldTimer += delta;
+            _ammoWheelPointerWorld = GetGlobalMousePosition();
+            if (!_ammoWheelActive && _reloadHoldTimer >= CombatConstants.AmmoSwitchHoldSeconds)
+                OpenAmmoWheel(run, _ammoWheelPointerWorld);
+            if (_ammoWheelActive)
+                UpdateAmmoWheelSelection(_ammoWheelPointerWorld);
             return;
         }
 
-        string? hint = _reloadHoldTimer >= CombatConstants.AmmoSwitchHoldSeconds
-            ? _controller.TryCycleAmmoType(run)
-            : _controller.TryStartReload(run);
+        string? hint = _ammoWheelActive
+            ? ConfirmAmmoWheelSelection(run)
+            : _reloadHoldTimer < CombatConstants.AmmoSwitchHoldSeconds
+                ? _controller.TryStartReload(run)
+                : null;
         if (!string.IsNullOrWhiteSpace(hint))
             _hud?.ShowHint(hint!, 1.5f);
 
         RefreshWeaponRuntime(run);
+        CloseAmmoWheel();
         _reloadHoldActive = false;
         _reloadHoldTimer = 0f;
+    }
+
+    private void HandleReloadInput(float delta, bool canControl, bool fullscreenUi, RunState? run, Vector2 pointerWorld)
+    {
+        _ammoWheelPointerWorld = pointerWorld;
+        HandleReloadInput(delta, canControl, fullscreenUi, run);
+    }
+
+    private void OpenAmmoWheel(RunState? run, Vector2 pointerWorld)
+    {
+        if (run == null)
+            return;
+
+        var weapon = _controller.CurrentWeapon;
+        if (weapon.AmmoTypes.Length <= 1)
+            return;
+
+        run.Player.EnsureWeaponStates();
+        var weaponState = run.Player.EnsureWeaponState(weapon.Id);
+        _ammoWheelOptions.Clear();
+
+        foreach (var ammo in weapon.AmmoTypes)
+        {
+            _ammoWheelOptions.Add(new AmmoWheelOption
+            {
+                Ammo = ammo,
+                Reserve = GridInventory.CountItemQuantity(run.Inventory.Items, ammo.ReserveItemId),
+                IsCurrent = ammo.Id == weaponState.AmmoTypeId,
+            });
+        }
+
+        if (_ammoWheelOptions.Count <= 1)
+            return;
+
+        _ammoWheelActive = true;
+        _ammoWheelCurrentAmmoId = weaponState.AmmoTypeId;
+        _ammoWheelHoveredIndex = -1;
+        UpdateAmmoWheelSelection(pointerWorld);
+        QueueRedraw();
+    }
+
+    private void CloseAmmoWheel()
+    {
+        bool wasActive = _ammoWheelActive || _ammoWheelOptions.Count > 0 || _ammoWheelHoveredIndex >= 0;
+        _ammoWheelActive = false;
+        _ammoWheelHoveredIndex = -1;
+        _ammoWheelCurrentAmmoId = string.Empty;
+        _ammoWheelOptions.Clear();
+        if (wasActive)
+            QueueRedraw();
+    }
+
+    private void UpdateAmmoWheelSelection(Vector2 pointerWorld)
+    {
+        if (!_ammoWheelActive || _ammoWheelOptions.Count == 0)
+            return;
+
+        var delta = pointerWorld - _player.PlayerPosition;
+        if (delta.Length() < AmmoWheelDeadZone)
+        {
+            if (_ammoWheelHoveredIndex != -1)
+            {
+                _ammoWheelHoveredIndex = -1;
+                QueueRedraw();
+            }
+            return;
+        }
+
+        float sliceAngle = Mathf.Tau / _ammoWheelOptions.Count;
+        float normalized = Mathf.PosMod(delta.Angle() + Mathf.Pi / 2f + sliceAngle * 0.5f, Mathf.Tau);
+        int nextIndex = Mathf.Clamp(Mathf.FloorToInt(normalized / sliceAngle), 0, _ammoWheelOptions.Count - 1);
+        if (_ammoWheelHoveredIndex != nextIndex)
+        {
+            _ammoWheelHoveredIndex = nextIndex;
+            QueueRedraw();
+        }
+    }
+
+    private string? ConfirmAmmoWheelSelection(RunState? run)
+    {
+        if (!_ammoWheelActive || run == null || _ammoWheelHoveredIndex < 0 || _ammoWheelHoveredIndex >= _ammoWheelOptions.Count)
+            return null;
+
+        var option = _ammoWheelOptions[_ammoWheelHoveredIndex];
+        if (option.IsCurrent || option.Reserve <= 0)
+            return null;
+
+        return _controller.TrySelectAmmoType(run, option.Ammo.Id);
+    }
+
+    private void DrawAmmoWheel()
+    {
+        if (!_ammoWheelActive || _ammoWheelOptions.Count == 0)
+            return;
+
+        var font = ThemeDB.FallbackFont;
+        if (font == null)
+            return;
+
+        var center = _player.PlayerPosition;
+        float sliceAngle = Mathf.Tau / _ammoWheelOptions.Count;
+        float startAngle = -Mathf.Pi / 2f;
+
+        DrawCircle(center, AmmoWheelOuterRadius + 8f, new Color(Palette.BgOuter, 0.08f));
+        DrawCircle(center, AmmoWheelInnerRadius - 6f, new Color(Palette.BgOuter, 0.88f));
+        DrawArc(center, AmmoWheelInnerRadius, 0f, Mathf.Tau, 36, new Color(Palette.Frame, 0.26f), 2f);
+        DrawArc(center, AmmoWheelOuterRadius, 0f, Mathf.Tau, 48, new Color(Palette.Frame, 0.32f), 2f);
+
+        for (int index = 0; index < _ammoWheelOptions.Count; index++)
+        {
+            var option = _ammoWheelOptions[index];
+            float from = startAngle + sliceAngle * index;
+            float to = from + sliceAngle;
+            bool hovered = index == _ammoWheelHoveredIndex;
+            bool available = option.Reserve > 0;
+            Color accent = option.IsCurrent
+                ? Palette.Frame
+                : available ? ResolveAmmoFeedbackColor(option.Ammo) : Palette.UiMuted;
+            float fillAlpha = hovered ? 0.34f : option.IsCurrent ? 0.24f : available ? 0.18f : 0.08f;
+            float strokeAlpha = hovered ? 0.95f : option.IsCurrent ? 0.78f : available ? 0.52f : 0.18f;
+
+            DrawColoredPolygon(BuildRingSector(center, AmmoWheelInnerRadius, AmmoWheelOuterRadius, from, to, 18), new Color(accent, fillAlpha));
+            DrawArc(center, AmmoWheelInnerRadius, from, to, 12, new Color(accent, strokeAlpha), hovered ? 2.4f : 1.6f);
+            DrawArc(center, AmmoWheelOuterRadius, from, to, 16, new Color(accent, strokeAlpha), hovered ? 2.4f : 1.8f);
+
+            var dividerDirection = Vector2.Right.Rotated(from);
+            DrawLine(center + dividerDirection * AmmoWheelInnerRadius, center + dividerDirection * AmmoWheelOuterRadius, new Color(Palette.Frame, 0.2f), 1.2f);
+
+            float midAngle = (from + to) * 0.5f;
+            var labelCenter = center + Vector2.Right.Rotated(midAngle) * ((AmmoWheelInnerRadius + AmmoWheelOuterRadius) * 0.5f);
+            int labelSize = UiScale.Font(11);
+            int reserveSize = UiScale.Font(10);
+            string reserveText = option.IsCurrent
+                ? GameText.Text("common.selected")
+                : $"x{option.Reserve}";
+            Color labelColor = available || option.IsCurrent ? Palette.UiText : Palette.UiMuted;
+            Color reserveColor = hovered ? accent : labelColor;
+
+            var labelMeasure = font.GetStringSize(option.Ammo.Label, HorizontalAlignment.Left, -1, labelSize);
+            DrawString(font, labelCenter + new Vector2(-labelMeasure.X * 0.5f, -4f), option.Ammo.Label, HorizontalAlignment.Left, -1, labelSize, labelColor);
+
+            var reserveMeasure = font.GetStringSize(reserveText, HorizontalAlignment.Left, -1, reserveSize);
+            DrawString(font, labelCenter + new Vector2(-reserveMeasure.X * 0.5f, 12f), reserveText, HorizontalAlignment.Left, -1, reserveSize, reserveColor);
+        }
+
+        if (!string.IsNullOrWhiteSpace(_ammoWheelCurrentAmmoId))
+        {
+            string centerText = WeaponData.GetAmmo(_controller.CurrentWeapon, _ammoWheelCurrentAmmoId).Label;
+            int centerSize = UiScale.Font(12);
+            var centerMeasure = font.GetStringSize(centerText, HorizontalAlignment.Left, -1, centerSize);
+            DrawString(font, center + new Vector2(-centerMeasure.X * 0.5f, 5f), centerText, HorizontalAlignment.Left, -1, centerSize, Palette.UiText);
+        }
+    }
+
+    private static Vector2[] BuildRingSector(Vector2 center, float innerRadius, float outerRadius, float fromAngle, float toAngle, int segments)
+    {
+        int safeSegments = Mathf.Max(4, segments);
+        var points = new List<Vector2>((safeSegments + 1) * 2);
+        for (int step = 0; step <= safeSegments; step++)
+        {
+            float t = step / (float)safeSegments;
+            float angle = Mathf.Lerp(fromAngle, toAngle, t);
+            points.Add(center + Vector2.Right.Rotated(angle) * outerRadius);
+        }
+
+        for (int step = safeSegments; step >= 0; step--)
+        {
+            float t = step / (float)safeSegments;
+            float angle = Mathf.Lerp(fromAngle, toAngle, t);
+            points.Add(center + Vector2.Right.Rotated(angle) * innerRadius);
+        }
+
+        return points.ToArray();
     }
 
     private void RefreshWeaponRuntime(RunState? run)

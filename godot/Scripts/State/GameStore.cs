@@ -119,9 +119,9 @@ public class GameStore
         return BuildDeploymentReadiness(_state.Save);
     }
 
-    public void DeployCombat()
+    public void DeployCombat(bool force = false)
     {
-        if (_state.Save.Session.ActiveRun != null || !_state.Runtime.PrimaryActionReady) return;
+        if (_state.Save.Session.ActiveRun != null || (!force && !_state.Runtime.PrimaryActionReady)) return;
         var readiness = BuildDeploymentReadiness(_state.Save);
         if (!readiness.CanDeploy) return;
 
@@ -655,22 +655,6 @@ public class GameStore
             result.CanDeploy = false;
             result.StatusLabel = GameText.Text("readiness.blocked");
             result.Detail = GameText.Text("readiness.no_weapon");
-            return result;
-        }
-
-        if (result.HighestThreat >= 3 && result.HealingUnits <= 0)
-        {
-            result.CanDeploy = false;
-            result.StatusLabel = GameText.Text("readiness.blocked");
-            result.Detail = GameText.Text("readiness.need_heal");
-            return result;
-        }
-
-        if (result.HighestThreat >= 2 && result.StagedUnits <= 0)
-        {
-            result.CanDeploy = false;
-            result.StatusLabel = GameText.Text("readiness.blocked");
-            result.Detail = GameText.Text("readiness.need_staged");
             return result;
         }
 

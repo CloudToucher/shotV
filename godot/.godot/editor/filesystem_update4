@@ -13,4 +13,3 @@ res://Scripts/Scenes/CombatScene.cs
 res://Scripts/Scenes/BaseCampScene.cs
 res://Scripts/UI/OverviewMapControl.cs
 res://Scripts/Combat/CombatRenderer.cs
-res://Scripts/UI/ViewportOverlay.Inventory.cs

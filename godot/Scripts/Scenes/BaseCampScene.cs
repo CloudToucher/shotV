@@ -117,7 +117,7 @@ public partial class BaseCampScene : Node2D, IOverlaySceneDataProvider
                 continue;
 
             var font = ThemeDB.FallbackFont;
-            int fontSize = ThemeDB.FallbackFontSize;
+            int fontSize = UiScale.Font(ThemeDB.FallbackFontSize);
             var textSize = font.GetStringSize(marker.Label, HorizontalAlignment.Center, -1, fontSize);
             DrawString(font, position + new Vector2(-textSize.X / 2f, -outerRadius - 8f), marker.Label, HorizontalAlignment.Center, -1, fontSize, Palette.UiText);
         }

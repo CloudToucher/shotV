@@ -189,6 +189,29 @@ public class PlayerController
         return $"{_currentWeapon.Label} 没有可切换备弹";
     }
 
+    public string? TrySelectAmmoType(RunState? runState, string ammoTypeId)
+    {
+        if (runState == null || string.IsNullOrWhiteSpace(ammoTypeId))
+            return null;
+
+        runState.Player.EnsureWeaponStates();
+        var weaponState = runState.Player.EnsureWeaponState(_currentWeapon.Id);
+        weaponState.MagazineCapacity = _currentWeapon.MagazineCapacity;
+
+        var targetAmmo = _currentWeapon.AmmoTypes.FirstOrDefault(ammo => ammo.Id == ammoTypeId);
+        if (targetAmmo == null || weaponState.AmmoTypeId == targetAmmo.Id)
+            return null;
+
+        int reserve = GridInventory.CountItemQuantity(runState.Inventory.Items, targetAmmo.ReserveItemId);
+        if (reserve <= 0)
+            return null;
+
+        weaponState.AmmoTypeId = targetAmmo.Id;
+        weaponState.Magazine = 0;
+        StartReload();
+        return $"{_currentWeapon.Label} 切换至 {targetAmmo.Label}，开始装填";
+    }
+
     public void CancelReload()
     {
         _isReloading = false;

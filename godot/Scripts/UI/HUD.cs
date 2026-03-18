@@ -409,7 +409,7 @@ public partial class HUD : Control
             AutowrapMode = TextServer.AutowrapMode.WordSmart,
             HorizontalAlignment = HorizontalAlignment.Left,
         };
-        label.AddThemeFontSizeOverride("font_size", fontSize);
+        label.AddThemeFontSizeOverride("font_size", UiScale.Font(fontSize));
         label.AddThemeColorOverride("font_color", color);
         if (strong)
             label.AddThemeColorOverride("font_outline_color", new Color(0f, 0f, 0f, 0f));

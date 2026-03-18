@@ -109,7 +109,7 @@ public partial class InventoryGridControl : Control
         DrawRect(new Rect2(rect.Position + new Vector2(2f, 2f), new Vector2(rect.Size.X - 4f, Mathf.Max(10f, rect.Size.Y * 0.38f))), new Color(1f, 1f, 1f, accentAlpha));
 
         var font = ThemeDB.FallbackFont;
-        int fontSize = rect.Size.Y >= 56f ? 12 : 11;
+        int fontSize = UiScale.Font(rect.Size.Y >= 56f ? 12 : 11);
         string label = definition.ShortLabel;
         var labelPos = rect.Position + new Vector2(8f, 18f);
         DrawString(font, labelPos, label, HorizontalAlignment.Left, Mathf.Max(10f, rect.Size.X - 16f), fontSize, Palette.UiText);
@@ -117,8 +117,9 @@ public partial class InventoryGridControl : Control
         if (item.Quantity > 1)
         {
             string quantity = $"x{item.Quantity}";
-            var size = font.GetStringSize(quantity, HorizontalAlignment.Left, -1, 10);
-            DrawString(font, rect.Position + new Vector2(rect.Size.X - size.X - 6f, rect.Size.Y - 8f), quantity, HorizontalAlignment.Left, -1, 10, Palette.UiText);
+            int quantityFont = UiScale.Font(10);
+            var size = font.GetStringSize(quantity, HorizontalAlignment.Left, -1, quantityFont);
+            DrawString(font, rect.Position + new Vector2(rect.Size.X - size.X - 6f, rect.Size.Y - 8f), quantity, HorizontalAlignment.Left, -1, quantityFont, Palette.UiText);
         }
 
         if (_badges.TryGetValue(item.Id, out var badge))
@@ -126,7 +127,7 @@ public partial class InventoryGridControl : Control
             var badgeRect = new Rect2(rect.Position + new Vector2(6f, rect.Size.Y - 22f), new Vector2(18f, 14f));
             DrawRect(badgeRect, new Color(definition.AccentColor, 0.92f));
             DrawRect(badgeRect, new Color(Palette.UiText, 0.14f), false, 1f);
-            DrawString(font, badgeRect.Position + new Vector2(5f, 11f), badge, HorizontalAlignment.Left, -1, 10, Palette.BgInner);
+            DrawString(font, badgeRect.Position + new Vector2(5f, 11f), badge, HorizontalAlignment.Left, -1, UiScale.Font(10), Palette.BgInner);
         }
     }
 

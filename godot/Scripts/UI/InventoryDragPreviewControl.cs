@@ -41,6 +41,6 @@ public partial class InventoryDragPreviewControl : Control
         DrawRect(new Rect2(rect.Position + new Vector2(2f, 2f), new Vector2(rect.Size.X - 4f, Mathf.Max(10f, rect.Size.Y * 0.38f))), new Color(1f, 1f, 1f, _valid ? 0.26f : 0.16f));
 
         var font = ThemeDB.FallbackFont;
-        DrawString(font, rect.Position + new Vector2(8f, 18f), definition.ShortLabel, HorizontalAlignment.Left, Mathf.Max(10f, rect.Size.X - 16f), rect.Size.Y >= 56f ? 12 : 11, Palette.UiText);
+        DrawString(font, rect.Position + new Vector2(8f, 18f), definition.ShortLabel, HorizontalAlignment.Left, Mathf.Max(10f, rect.Size.X - 16f), UiScale.Font(rect.Size.Y >= 56f ? 12 : 11), Palette.UiText);
     }
 }

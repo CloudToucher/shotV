@@ -234,6 +234,7 @@ public partial class ViewportOverlay
 
         var split = new HBoxContainer();
         split.AddThemeConstantOverride("separation", 24);
+        split.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
         split.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
         _panelContentContainer.AddChild(split);
 
@@ -274,20 +275,28 @@ public partial class ViewportOverlay
         leftCol.AddChild(quickSlotsCard);
 
         var host = CreateInteractiveSection(GameText.Text("inventory.transfer"), GameText.Text("inventory.transfer_meta"));
+        host.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+        host.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
         var body = host.GetChild<VBoxContainer>(0);
+        body.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+        body.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
 
         _inventoryInstructionLabel = CreateLabel(12, Palette.UiMuted, false, 0.2f, true);
         body.AddChild(_inventoryInstructionLabel);
 
         var gridRow = new HBoxContainer();
         gridRow.AddThemeConstantOverride("separation", 14);
+        gridRow.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+        gridRow.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
         body.AddChild(gridRow);
 
         var groundColumn = new VBoxContainer();
         groundColumn.AddThemeConstantOverride("separation", 8);
+        groundColumn.CustomMinimumSize = new Vector2(6f * GetInventoryCellSize(), 0f);
+        groundColumn.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
         gridRow.AddChild(groundColumn);
 
-        var groundLabel = CreateLabel(13, Palette.UiText, true, 0.3f, true);
+        var groundLabel = CreateLabel(13, Palette.UiText, true, 0.3f, false);
         groundLabel.Text = GameText.Text("inventory.nearby_ground");
         groundColumn.AddChild(groundLabel);
 
@@ -297,9 +306,12 @@ public partial class ViewportOverlay
 
         var inventoryColumn = new VBoxContainer();
         inventoryColumn.AddThemeConstantOverride("separation", 8);
+        inventoryColumn.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+        inventoryColumn.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
         gridRow.AddChild(inventoryColumn);
 
-        var inventoryLabel = CreateLabel(13, Palette.UiText, true, 0.3f, true);
+        var inventoryLabel = CreateLabel(13, Palette.UiText, true, 0.3f, false);
+        inventoryLabel.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
         inventoryLabel.Text = GameText.Text("inventory.carried_pack");
         inventoryColumn.AddChild(inventoryLabel);
 
@@ -325,7 +337,7 @@ public partial class ViewportOverlay
         rightCol.AddChild(host);
     }
 
-    private void BuildLaunchInventoryContent(Control parent, InventoryState inventory)
+    private void BuildLaunchInventoryContent(Control parent, InventoryState inventory, bool canDeploy)
     {
         EnsureBaseStateSynced(inventory);
 
@@ -335,6 +347,21 @@ public partial class ViewportOverlay
         
         _inventoryInstructionLabel = CreateLabel(12, Palette.UiMuted, false, 0.2f, true);
         packBody.AddChild(_inventoryInstructionLabel);
+
+        var controlsRow = new HBoxContainer();
+        controlsRow.AddThemeConstantOverride("separation", 10);
+        packBody.AddChild(controlsRow);
+
+        var adjustButton = CreateSmallButton(GameText.Text("inventory.adjust_supplies"), true);
+        adjustButton.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+        adjustButton.Pressed += () => GameManager.Instance?.Store?.OpenScenePanel(ScenePanelMode.Locker);
+        controlsRow.AddChild(adjustButton);
+
+        var deployButton = CreateActionButton(GameText.Text("fullscreen.action.deploy"), true);
+        deployButton.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+        deployButton.Disabled = !canDeploy;
+        deployButton.Pressed += () => GameManager.Instance?.Store?.DeployCombat(true);
+        controlsRow.AddChild(deployButton);
         
         var packScroll = new ScrollContainer
         {
@@ -354,15 +381,6 @@ public partial class ViewportOverlay
         _basePackGrid = new InventoryGridControl();
         _basePackGrid.Configure(inventory.DeploymentPack.Columns, inventory.DeploymentPack.Rows, GetInventoryCellSize());
         packCenter.AddChild(_basePackGrid);
-
-        var controlsRow = new HBoxContainer();
-        controlsRow.AddThemeConstantOverride("separation", 10);
-        packBody.AddChild(controlsRow);
-
-        var adjustButton = CreateSmallButton(GameText.Text("inventory.adjust_supplies"), true);
-        adjustButton.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
-        adjustButton.Pressed += () => GameManager.Instance?.Store?.OpenScenePanel(ScenePanelMode.Locker);
-        controlsRow.AddChild(adjustButton);
 
         var noteLabel = CreateLabel(12, Palette.UiMuted, false, 0.2f, true);
         noteLabel.Text = GameText.Text("inventory.launch_resources");
