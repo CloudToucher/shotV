@@ -31,6 +31,8 @@ public class HostileDefinition
     public float ChargeSpeed { get; init; }
     public float ChargeDuration { get; init; }
     public float RecoverDuration { get; init; }
+    public int ProjectileCount { get; init; } = 1;
+    public float ProjectileSpreadDegrees { get; init; }
     public float AlertRadius { get; init; }
     public float LeashRadius { get; init; }
     public int ArmorLevel { get; init; }
@@ -116,24 +118,81 @@ public static class HostileData
             }
         },
         {
+            HostileType.Stalker, new HostileDefinition
+            {
+                Type = HostileType.Stalker,
+                Radius = 16f,
+                MaxHealth = 28f,
+                MoveSpeed = 168f,
+                ContactDamage = 10f,
+                ContactInterval = 0.54f,
+                AttackCooldown = 1.7f,
+                AttackWindup = 0.28f,
+                ChargeTriggerDistance = 190f,
+                ChargeSpeed = 480f,
+                ChargeDuration = 0.18f,
+                RecoverDuration = 0.22f,
+                AlertRadius = 280f,
+                LeashRadius = 760f,
+                ArmorLevel = 0,
+                Colors = new HostileColors
+                {
+                    Body = Palette.EnemyStalker,
+                    Edge = Palette.EnemyEdge,
+                    Glow = Palette.EnemyStalkerGlow,
+                },
+            }
+        },
+        {
+            HostileType.Suppressor, new HostileDefinition
+            {
+                Type = HostileType.Suppressor,
+                Radius = 19f,
+                MaxHealth = 54f,
+                MoveSpeed = 88f,
+                ContactDamage = 12f,
+                ContactInterval = 0.8f,
+                AttackCooldown = 1.92f,
+                AttackWindup = 0.64f,
+                AttackRange = 520f,
+                PreferredDistance = 320f,
+                ProjectileSpeed = 360f,
+                ProjectileRadius = 7.5f,
+                ProjectileDamage = 13f,
+                ProjectileCount = 3,
+                ProjectileSpreadDegrees = 16f,
+                AlertRadius = 360f,
+                LeashRadius = 860f,
+                ArmorLevel = 2,
+                Colors = new HostileColors
+                {
+                    Body = Palette.EnemySuppressor,
+                    Edge = Palette.EnemyEdge,
+                    Glow = Palette.EnemySuppressorGlow,
+                },
+            }
+        },
+        {
             HostileType.Boss, new HostileDefinition
             {
                 Type = HostileType.Boss,
                 Radius = 34f,
-                MaxHealth = 520f,
-                MoveSpeed = 82f,
+                MaxHealth = 620f,
+                MoveSpeed = 86f,
                 ContactDamage = 26f,
                 ContactInterval = 0.8f,
-                AttackCooldown = 1.5f,
+                AttackCooldown = 1.42f,
                 AttackWindup = 0.72f,
-                AttackRange = 480f,
+                AttackRange = 500f,
                 PreferredDistance = 250f,
                 ProjectileSpeed = 290f,
                 ProjectileRadius = 8f,
-                ProjectileDamage = 16f,
+                ProjectileDamage = 17f,
+                ProjectileCount = 5,
+                ProjectileSpreadDegrees = 18f,
                 AlertRadius = 420f,
                 LeashRadius = 980f,
-                ArmorLevel = 4,
+                ArmorLevel = 5,
                 Colors = new HostileColors
                 {
                     Body = Palette.EnemyBoss,

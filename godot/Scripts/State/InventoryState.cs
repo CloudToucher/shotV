@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using ShotV.Core;
+using ShotV.Data;
 
 namespace ShotV.State;
 
@@ -43,8 +44,11 @@ public class InventoryState
 {
     public int StashColumns { get; set; } = 8;
     public int StashRows { get; set; } = 6;
-    public List<WeaponType> EquippedWeaponIds { get; set; } = new() { WeaponType.MachineGun, WeaponType.Grenade, WeaponType.Sniper };
-    public string? EquippedArmorId { get; set; }
+    public List<WeaponType> EquippedWeaponIds { get; set; } = new(WeaponData.DefaultLoadoutIds);
+    public string? EquippedArmorId { get; set; } = "scout-rig";
+    public List<string> OwnedArmorIds { get; set; } = new() { "scout-rig", "assault-rig", "bulwark-rig" };
+    public List<WeaponBenchState> WeaponStates { get; set; } = new();
+    public List<ArmorBenchState> ArmorStates { get; set; } = new();
     public List<InventoryItemRecord> StoredItems { get; set; } = new();
     public GridInventoryState DeploymentPack { get; set; } = new();
 
@@ -53,6 +57,9 @@ public class InventoryState
         StashColumns = StashColumns, StashRows = StashRows,
         EquippedWeaponIds = new List<WeaponType>(EquippedWeaponIds),
         EquippedArmorId = EquippedArmorId,
+        OwnedArmorIds = new List<string>(OwnedArmorIds),
+        WeaponStates = WeaponStates.Select(state => state.Clone()).ToList(),
+        ArmorStates = ArmorStates.Select(state => state.Clone()).ToList(),
         StoredItems = StoredItems.Select(i => i.Clone()).ToList(),
         DeploymentPack = DeploymentPack.Clone(),
     };

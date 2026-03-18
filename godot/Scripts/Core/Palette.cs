@@ -64,6 +64,10 @@ public static class Palette
     public static readonly Color EnemyRangedGlow = FromHex(0xffddb2);
     public static readonly Color EnemyCharger = FromHex(0xff6686);
     public static readonly Color EnemyChargerGlow = FromHex(0xff9eb0);
+    public static readonly Color EnemyStalker = FromHex(0xff7a94);
+    public static readonly Color EnemyStalkerGlow = FromHex(0xffb0c2);
+    public static readonly Color EnemySuppressor = FromHex(0xff9f56);
+    public static readonly Color EnemySuppressorGlow = FromHex(0xffc98b);
     public static readonly Color EnemyBoss = FromHex(0xff5d4c);
     public static readonly Color EnemyBossGlow = FromHex(0xff9d74);
     public static readonly Color EnemyProjectile = FromHex(0xff875c);

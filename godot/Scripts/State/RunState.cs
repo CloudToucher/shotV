@@ -15,6 +15,9 @@ public class PlayerRunState
         public string AmmoTypeId { get; set; } = "";
         public int Magazine { get; set; }
         public int MagazineCapacity { get; set; }
+        public float Durability { get; set; } = 100f;
+        public float MaxDurability { get; set; } = 100f;
+        public int UpgradeLevel { get; set; }
 
         public PlayerWeaponState Clone() => new()
         {
@@ -22,14 +25,36 @@ public class PlayerRunState
             AmmoTypeId = AmmoTypeId,
             Magazine = Magazine,
             MagazineCapacity = MagazineCapacity,
+            Durability = Durability,
+            MaxDurability = MaxDurability,
+            UpgradeLevel = UpgradeLevel,
+        };
+    }
+
+    public class PlayerArmorState
+    {
+        public string ArmorId { get; set; } = "";
+        public float Durability { get; set; } = 100f;
+        public float MaxDurability { get; set; } = 100f;
+        public int UpgradeLevel { get; set; }
+        public float DamageAbsorbed { get; set; }
+
+        public PlayerArmorState Clone() => new()
+        {
+            ArmorId = ArmorId,
+            Durability = Durability,
+            MaxDurability = MaxDurability,
+            UpgradeLevel = UpgradeLevel,
+            DamageAbsorbed = DamageAbsorbed,
         };
     }
 
     public float Health { get; set; } = 100f;
     public float MaxHealth { get; set; } = 100f;
-    public WeaponType CurrentWeaponId { get; set; } = WeaponType.MachineGun;
-    public List<WeaponType> LoadoutWeaponIds { get; set; } = new() { WeaponType.MachineGun, WeaponType.Grenade, WeaponType.Sniper };
+    public WeaponType CurrentWeaponId { get; set; } = WeaponData.GetDefaultWeapon().Id;
+    public List<WeaponType> LoadoutWeaponIds { get; set; } = new(WeaponData.DefaultLoadoutIds);
     public List<PlayerWeaponState> WeaponStates { get; set; } = new();
+    public PlayerArmorState Armor { get; set; } = new();
     public int ShotsFired { get; set; }
     public int GrenadesThrown { get; set; }
     public int DashesUsed { get; set; }
@@ -40,6 +65,7 @@ public class PlayerRunState
         Health = Health, MaxHealth = MaxHealth, CurrentWeaponId = CurrentWeaponId,
         LoadoutWeaponIds = new List<WeaponType>(LoadoutWeaponIds),
         WeaponStates = WeaponStates.Select(state => state.Clone()).ToList(),
+        Armor = Armor.Clone(),
         ShotsFired = ShotsFired, GrenadesThrown = GrenadesThrown,
         DashesUsed = DashesUsed, DamageTaken = DamageTaken,
     };
@@ -58,10 +84,17 @@ public class PlayerRunState
             if (WeaponData.ById.TryGetValue(weaponId, out var definition))
             {
                 existing.MagazineCapacity = definition.MagazineCapacity;
+                if (existing.MaxDurability <= 0f)
+                {
+                    existing.MaxDurability = definition.MaxDurability;
+                    if (existing.Durability <= 0f)
+                        existing.Durability = definition.MaxDurability;
+                }
                 if (string.IsNullOrWhiteSpace(existing.AmmoTypeId)
                     || !definition.AmmoTypes.Any(ammo => ammo.Id == existing.AmmoTypeId))
                     existing.AmmoTypeId = WeaponData.GetDefaultAmmo(definition).Id;
                 existing.Magazine = Mathf.Clamp(existing.Magazine, 0, existing.MagazineCapacity);
+                existing.Durability = Mathf.Clamp(existing.Durability, 0f, existing.MaxDurability);
             }
 
             return existing;
@@ -69,7 +102,7 @@ public class PlayerRunState
 
         var fallback = WeaponData.ById.TryGetValue(weaponId, out var weapon)
             ? weapon
-            : WeaponData.Loadout[0];
+            : WeaponData.GetDefaultWeapon();
         var ammo = WeaponData.GetDefaultAmmo(fallback);
         var created = new PlayerWeaponState
         {
@@ -77,6 +110,9 @@ public class PlayerRunState
             AmmoTypeId = ammo.Id,
             Magazine = fallback.MagazineCapacity,
             MagazineCapacity = fallback.MagazineCapacity,
+            Durability = fallback.MaxDurability,
+            MaxDurability = fallback.MaxDurability,
+            UpgradeLevel = 0,
         };
         WeaponStates.Add(created);
         return created;
@@ -221,7 +257,7 @@ public class RunState
             {
                 Health = CombatConstants.PlayerMaxHealth,
                 MaxHealth = CombatConstants.PlayerMaxHealth,
-                CurrentWeaponId = loadoutWeaponIds.Count > 0 ? loadoutWeaponIds[0] : WeaponType.MachineGun,
+                CurrentWeaponId = loadoutWeaponIds.Count > 0 ? loadoutWeaponIds[0] : WeaponData.GetDefaultWeapon().Id,
                 LoadoutWeaponIds = new List<WeaponType>(loadoutWeaponIds),
                 WeaponStates = loadoutWeaponIds
                     .Where(WeaponData.ById.ContainsKey)
@@ -235,9 +271,13 @@ public class RunState
                             AmmoTypeId = ammo.Id,
                             Magazine = definition.MagazineCapacity,
                             MagazineCapacity = definition.MagazineCapacity,
+                            Durability = definition.MaxDurability,
+                            MaxDurability = definition.MaxDurability,
+                            UpgradeLevel = 0,
                         };
                     })
                     .ToList(),
+                Armor = new PlayerRunState.PlayerArmorState(),
             },
             Map = mapState.Clone(),
             Inventory = new GridInventoryState(),

@@ -11,7 +11,7 @@ public class GameSettingsState
 
 public class SaveState
 {
-    public int Version { get; set; } = 8;
+    public int Version { get; set; } = 9;
     public string CreatedAt { get; set; } = "";
     public string UpdatedAt { get; set; } = "";
     public BaseState Base { get; set; } = new();
@@ -41,7 +41,7 @@ public class SaveState
         var now = DateTime.UtcNow.ToString("o");
         return new SaveState
         {
-            Version = 8,
+            Version = 9,
             CreatedAt = now,
             UpdatedAt = now,
             Base = new BaseState(),

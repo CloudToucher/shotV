@@ -17,8 +17,8 @@ public interface IPlayerControllerCallbacks
 
 public class PlayerController
 {
-    private WeaponDefinition _currentWeapon = WeaponData.BySlot[WeaponSlot.Slot1];
-    private List<WeaponDefinition> _loadout = WeaponData.Loadout.ToList();
+    private WeaponDefinition _currentWeapon = WeaponData.GetDefaultWeapon();
+    private List<WeaponDefinition> _loadout = WeaponData.DefaultLoadout.ToList();
     private WeaponSlot _currentSlot = WeaponSlot.Slot1;
     private Vector2 _lastAimPoint;
     private float _shotCooldown;
@@ -85,6 +85,39 @@ public class PlayerController
             _lastAimPoint = new Vector2(viewportCenter.Value.X, viewportCenter.Value.Y - 120f);
     }
 
+    public bool MatchesLoadout(IReadOnlyList<WeaponType>? loadoutWeaponIds, WeaponType currentWeaponId)
+    {
+        var nextLoadout = BuildLoadout(loadoutWeaponIds);
+        if (_loadout.Count != nextLoadout.Count)
+            return false;
+
+        for (int index = 0; index < _loadout.Count; index++)
+        {
+            if (_loadout[index].Id != nextLoadout[index].Id)
+                return false;
+        }
+
+        return _currentWeapon.Id == currentWeaponId;
+    }
+
+    public void SyncLoadout(IReadOnlyList<WeaponType>? loadoutWeaponIds, WeaponType currentWeaponId, IPlayerControllerCallbacks callbacks)
+    {
+        var nextLoadout = BuildLoadout(loadoutWeaponIds);
+        if (nextLoadout.Count == 0)
+            return;
+
+        _loadout = nextLoadout;
+        int nextIndex = _loadout.FindIndex(weapon => weapon.Id == currentWeaponId);
+        if (nextIndex < 0)
+            nextIndex = 0;
+
+        CancelReload();
+        _currentWeapon = _loadout[nextIndex];
+        _currentSlot = (WeaponSlot)(nextIndex + 1);
+        _shotCooldown = 0f;
+        callbacks.OnWeaponChanged(_currentWeapon, _currentSlot, true);
+    }
+
     public void HandleInput(
         Vector2 moveIntent,
         bool dashPressed,
@@ -96,7 +129,7 @@ public class PlayerController
         Rect2 arenaBounds,
         IPlayerControllerCallbacks callbacks)
     {
-        if (weaponSwitch.HasValue && weaponSwitch.Value != _currentSlot)
+        if (weaponSwitch.HasValue && weaponSwitch.Value != _currentSlot && (int)weaponSwitch.Value <= _loadout.Count)
         {
             CancelReload();
             ApplyWeapon(weaponSwitch.Value, callbacks, false);
@@ -237,13 +270,13 @@ public class PlayerController
             var clamped = new Vector2(
                 Mathf.Clamp(pointerWorld.X, arenaBounds.Position.X, arenaBounds.End.X),
                 Mathf.Clamp(pointerWorld.Y, arenaBounds.Position.Y, arenaBounds.End.Y));
-            return _currentWeapon.Id == WeaponType.Grenade
+            return _currentWeapon.FireMode == WeaponFireMode.Launcher
                 ? MathUtil.ClampToDistance(clamped, playerPos, _currentWeapon.Range)
                 : clamped;
         }
 
         float aimAngle = player.AimAngle;
-        float idleDist = _currentWeapon.Id == WeaponType.Grenade
+        float idleDist = _currentWeapon.FireMode == WeaponFireMode.Launcher
             ? Mathf.Min(_currentWeapon.Range, 120f)
             : 120f;
         return new Vector2(
@@ -254,6 +287,9 @@ public class PlayerController
     private void ApplyWeapon(WeaponSlot slot, IPlayerControllerCallbacks callbacks, bool silent)
     {
         int index = Mathf.Clamp((int)slot - 1, 0, _loadout.Count - 1);
+        if (index >= _loadout.Count)
+            return;
+
         _currentWeapon = _loadout[index];
         _currentSlot = slot;
         _shotCooldown = 0f;
@@ -277,15 +313,9 @@ public class PlayerController
             }
         }
 
-        foreach (var weapon in WeaponData.Loadout)
-        {
-            if (seen.Add(weapon.Id))
-                result.Add(weapon);
-        }
-
         if (result.Count == 0)
-            result.AddRange(WeaponData.Loadout);
+            result.AddRange(WeaponData.DefaultLoadout);
 
-        return result.Take(WeaponData.Loadout.Length).ToList();
+        return result.Take(WeaponData.MaxLoadoutSize).ToList();
     }
 }

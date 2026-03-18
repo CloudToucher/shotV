@@ -31,7 +31,7 @@ public partial class BaseCampScene : Node2D, IOverlaySceneDataProvider
         _markers = _layout.Markers;
 
         _player.Reset();
-        _player.SetWeaponStyle(WeaponType.MachineGun);
+        _player.SetWeaponStyle(WeaponData.GetDefaultWeapon().Id);
         _player.SetPlayerPosition(_layout.PlayerSpawn.X, _layout.PlayerSpawn.Y);
         _camera.Position = _player.PlayerPosition;
 

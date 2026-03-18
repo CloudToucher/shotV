@@ -10,7 +10,6 @@ namespace ShotV.Combat;
 
 public interface IEncounterCallbacks
 {
-    void OnWaveStarted(int waveIndex, string hint);
     void OnEnemySpawned(HostileType type);
     void OnBossSpawned(EnemyActor enemy);
     void OnBossPhaseShift(EnemyActor enemy);
@@ -25,31 +24,34 @@ public class EncounterManager
 {
     private readonly List<EnemyActor> _enemies = new();
     private readonly List<EnemyProjectile> _projectiles = new();
+    private readonly Queue<HostileType> _pendingBossEscorts = new();
     private readonly Random _rng = new();
 
     private Rect2 _arenaBounds;
     private List<WorldObstacle> _obstacles = new();
     private List<WorldRegion> _regions = new();
     private List<WorldSpawnAnchor> _spawnAnchors = new();
+    private Vector2 _bossSpawn;
     private EncounterState _state = EncounterState.Active;
     private int _killCount;
     private int _enemyId;
     private float _spawnCooldown;
     private int _pendingSpawnCount;
+    private EnemyActor? _boss;
 
     public IReadOnlyList<EnemyActor> Enemies => _enemies;
     public IReadOnlyList<EnemyProjectile> Projectiles => _projectiles;
     public EncounterState State => _state;
-    public int WaveIndex => 0;
     public int KillCount => _killCount;
     public int PendingSpawnCount => _pendingSpawnCount;
 
-    public void Resize(Rect2 arenaBounds, List<WorldObstacle> obstacles, List<WorldRegion> regions, List<WorldSpawnAnchor> spawnAnchors)
+    public void Resize(Rect2 arenaBounds, List<WorldObstacle> obstacles, List<WorldRegion> regions, List<WorldSpawnAnchor> spawnAnchors, Vector2 bossSpawn)
     {
         _arenaBounds = arenaBounds;
         _obstacles = obstacles;
         _regions = regions;
         _spawnAnchors = spawnAnchors;
+        _bossSpawn = bossSpawn;
     }
 
     public void Reset()
@@ -61,6 +63,8 @@ public class EncounterManager
         _pendingSpawnCount = 0;
         _projectiles.Clear();
         _enemies.Clear();
+        _boss = null;
+        _pendingBossEscorts.Clear();
     }
 
     public void MarkPlayerDown()
@@ -75,15 +79,17 @@ public class EncounterManager
         _pendingSpawnCount = 0;
         _projectiles.Clear();
         _enemies.Clear();
+        _boss = null;
     }
 
-    public EnemyActor? GetBoss() => null;
+    public EnemyActor? GetBoss() => _boss;
 
     public void Update(float delta, float elapsed, Vector2 playerPos, float playerRadius, bool playerDashing, IEncounterCallbacks callbacks)
     {
         if (_state != EncounterState.Active)
             return;
 
+        EnsureBossSpawned(callbacks);
         AdvanceNaturalSpawning(delta, playerPos, callbacks);
         UpdateEnemies(delta, elapsed, playerPos, playerRadius, callbacks);
         UpdateProjectiles(delta, playerPos, playerRadius, playerDashing, callbacks);
@@ -135,6 +141,12 @@ public class EncounterManager
 
         if (enemy.Health > 0f)
             return;
+
+        if (enemy.Type == HostileType.Boss)
+        {
+            _boss = null;
+            callbacks.OnBossDefeated(enemy);
+        }
 
         _killCount++;
         callbacks.OnEnemyKilled(enemy);
@@ -205,18 +217,25 @@ public class EncounterManager
 
     private void SpawnEnemy(WorldSpawnAnchor anchor, WorldRegion region, HostileType type, IEncounterCallbacks callbacks)
     {
+        var enemy = CreateEnemyActor(anchor.Position, anchor.RegionId, region, type);
+        _enemies.Add(enemy);
+        callbacks.OnEnemySpawned(enemy.Type);
+    }
+
+    private EnemyActor CreateEnemyActor(Vector2 position, string regionId, WorldRegion region, HostileType type)
+    {
         var definition = HostileData.ByType[type];
         var profile = GetEncounterProfile(region);
-        var enemy = new EnemyActor
+        return new EnemyActor
         {
-            Id = _enemyId,
+            Id = _enemyId++,
             Type = type,
             Definition = definition,
-            X = anchor.Position.X,
-            Y = anchor.Position.Y,
-            HomeX = anchor.Position.X,
-            HomeY = anchor.Position.Y,
-            SpawnRegionId = anchor.RegionId,
+            X = position.X,
+            Y = position.Y,
+            HomeX = position.X,
+            HomeY = position.Y,
+            SpawnRegionId = regionId,
             SpawnRegionKind = region.Kind,
             Health = definition.MaxHealth,
             ContactCooldown = 0.18f + (float)_rng.NextDouble() * 0.16f,
@@ -234,10 +253,6 @@ public class EncounterManager
             AlertDuration = profile.AlertDuration,
             SupportAlertRadius = profile.SupportAlertRadius,
         };
-
-        _enemyId++;
-        _enemies.Add(enemy);
-        callbacks.OnEnemySpawned(type);
     }
 
     private void UpdateEnemies(float delta, float elapsed, Vector2 playerPos, float playerRadius, IEncounterCallbacks callbacks)
@@ -288,9 +303,14 @@ public class EncounterManager
                     case HostileType.Charger:
                         UpdateChargerEnemy(enemy, delta, distance, dirX, dirY, ref velocityX, ref velocityY);
                         break;
+                    case HostileType.Stalker:
+                        UpdateStalkerEnemy(enemy, delta, distance, dirX, dirY, ref velocityX, ref velocityY);
+                        break;
+                    case HostileType.Suppressor:
+                        UpdateSuppressorEnemy(enemy, delta, distance, dirX, dirY, ref velocityX, ref velocityY);
+                        break;
                     case HostileType.Boss:
-                        velocityX = dirX * enemy.Definition.MoveSpeed;
-                        velocityY = dirY * enemy.Definition.MoveSpeed;
+                        UpdateBossEnemy(enemy, distance, dirX, dirY, ref velocityX, ref velocityY, callbacks);
                         break;
                 }
             }
@@ -337,6 +357,7 @@ public class EncounterManager
         }
 
         ResolveEnemySeparation();
+        SpawnQueuedBossEscorts(callbacks);
     }
 
     private static void UpdateIdleEnemy(EnemyActor enemy, ref float velocityX, ref float velocityY)
@@ -449,6 +470,319 @@ public class EncounterManager
         }
     }
 
+    private static void UpdateStalkerEnemy(EnemyActor enemy, float delta, float distance, float dirX, float dirY, ref float velocityX, ref float velocityY)
+    {
+        switch (enemy.Mode)
+        {
+            case HostileMode.Windup:
+                enemy.FacingAngle = Mathf.Atan2(enemy.ChargeDirY, enemy.ChargeDirX);
+                enemy.ModeTimer = Mathf.Max(0f, enemy.ModeTimer - delta);
+                if (enemy.ModeTimer == 0f)
+                {
+                    enemy.Mode = HostileMode.Charge;
+                    enemy.ModeTimer = enemy.Definition.ChargeDuration;
+                    enemy.AttackCooldown = enemy.Definition.AttackCooldown;
+                    enemy.AttackPulse = 0.88f;
+                }
+                break;
+
+            case HostileMode.Charge:
+                enemy.FacingAngle = Mathf.Atan2(enemy.ChargeDirY, enemy.ChargeDirX);
+                velocityX = enemy.ChargeDirX * enemy.Definition.ChargeSpeed;
+                velocityY = enemy.ChargeDirY * enemy.Definition.ChargeSpeed;
+                enemy.ModeTimer = Mathf.Max(0f, enemy.ModeTimer - delta);
+                if (enemy.ModeTimer == 0f)
+                {
+                    enemy.Mode = HostileMode.Recover;
+                    enemy.ModeTimer = enemy.Definition.RecoverDuration;
+                }
+                break;
+
+            case HostileMode.Recover:
+                enemy.ModeTimer = Mathf.Max(0f, enemy.ModeTimer - delta);
+                if (enemy.ModeTimer == 0f)
+                    enemy.Mode = HostileMode.Advance;
+                break;
+
+            default:
+                int flankSign = enemy.Id % 2 == 0 ? 1 : -1;
+                float flankStrength = distance > 110f ? 0.44f : 0.18f;
+                velocityX = (dirX + -dirY * flankSign * flankStrength) * enemy.Definition.MoveSpeed;
+                velocityY = (dirY + dirX * flankSign * flankStrength) * enemy.Definition.MoveSpeed;
+                if (enemy.AttackCooldown == 0f && distance <= enemy.Definition.ChargeTriggerDistance)
+                {
+                    enemy.Mode = HostileMode.Windup;
+                    enemy.ModeTimer = enemy.Definition.AttackWindup;
+                    enemy.ChargeDirX = dirX;
+                    enemy.ChargeDirY = dirY;
+                    enemy.AttackPulse = 0.62f;
+                }
+                break;
+        }
+    }
+
+    private void UpdateSuppressorEnemy(EnemyActor enemy, float delta, float distance, float dirX, float dirY, ref float velocityX, ref float velocityY)
+    {
+        if (enemy.Mode == HostileMode.Aim)
+        {
+            enemy.ModeTimer = Mathf.Max(0f, enemy.ModeTimer - delta);
+            if (enemy.ModeTimer == 0f)
+            {
+                SpawnEnemyProjectile(enemy, dirX, dirY);
+                enemy.Mode = HostileMode.Advance;
+                enemy.AttackCooldown = enemy.Definition.AttackCooldown;
+                enemy.AttackPulse = 1f;
+            }
+            return;
+        }
+
+        float preferredDistance = enemy.Definition.PreferredDistance;
+        if (distance > preferredDistance + 72f)
+        {
+            velocityX = dirX * enemy.Definition.MoveSpeed;
+            velocityY = dirY * enemy.Definition.MoveSpeed;
+        }
+        else if (distance < preferredDistance - 54f)
+        {
+            velocityX = -dirX * enemy.Definition.MoveSpeed * 0.92f;
+            velocityY = -dirY * enemy.Definition.MoveSpeed * 0.92f;
+        }
+        else
+        {
+            int orbitSign = enemy.Id % 2 == 0 ? 1 : -1;
+            velocityX = -dirY * orbitSign * enemy.Definition.MoveSpeed * 0.54f;
+            velocityY = dirX * orbitSign * enemy.Definition.MoveSpeed * 0.54f;
+        }
+
+        if (enemy.AttackCooldown == 0f && distance <= enemy.Definition.AttackRange)
+        {
+            enemy.Mode = HostileMode.Aim;
+            enemy.ModeTimer = enemy.Definition.AttackWindup;
+            enemy.AttackPulse = 0.72f;
+        }
+    }
+
+    private void UpdateBossEnemy(EnemyActor enemy, float distance, float dirX, float dirY, ref float velocityX, ref float velocityY, IEncounterCallbacks callbacks)
+    {
+        TryAdvanceBossPhase(enemy, callbacks);
+
+        float preferredDistance = enemy.Phase switch
+        {
+            1 => 280f,
+            2 => 236f,
+            _ => 210f,
+        };
+        float speedScale = enemy.Phase switch
+        {
+            1 => 1f,
+            2 => 1.12f,
+            _ => 1.22f,
+        };
+
+        if (distance > preferredDistance + 64f)
+        {
+            velocityX = dirX * enemy.Definition.MoveSpeed * speedScale;
+            velocityY = dirY * enemy.Definition.MoveSpeed * speedScale;
+        }
+        else if (distance < preferredDistance - 52f)
+        {
+            velocityX = -dirX * enemy.Definition.MoveSpeed * 0.7f;
+            velocityY = -dirY * enemy.Definition.MoveSpeed * 0.7f;
+        }
+        else
+        {
+            int orbitSign = enemy.Id % 2 == 0 ? 1 : -1;
+            velocityX = -dirY * orbitSign * enemy.Definition.MoveSpeed * 0.52f;
+            velocityY = dirX * orbitSign * enemy.Definition.MoveSpeed * 0.52f;
+        }
+
+        if (enemy.AttackCooldown > 0f || distance > enemy.Definition.AttackRange * 1.35f)
+            return;
+
+        switch (enemy.Pattern)
+        {
+            case BossPattern.Nova:
+                SpawnBossNova(enemy);
+                callbacks.OnBossAttack(BossPattern.Nova, enemy, null);
+                break;
+            case BossPattern.Fan:
+                {
+                    float targetAngle = Mathf.Atan2(dirY, dirX);
+                    SpawnBossFan(enemy, targetAngle);
+                    callbacks.OnBossAttack(BossPattern.Fan, enemy, targetAngle);
+                    break;
+                }
+            case BossPattern.Lance:
+                {
+                    float targetAngle = Mathf.Atan2(dirY, dirX);
+                    SpawnBossLance(enemy, targetAngle);
+                    callbacks.OnBossAttack(BossPattern.Lance, enemy, targetAngle);
+                    break;
+                }
+            default:
+                SpawnBossSpiral(enemy);
+                callbacks.OnBossAttack(BossPattern.Spiral, enemy, null);
+                break;
+        }
+
+        enemy.Pattern = GetNextBossPattern(enemy);
+        enemy.AttackCooldown = enemy.Definition.AttackCooldown * (enemy.Phase switch
+        {
+            1 => 0.94f,
+            2 => 0.76f,
+            _ => 0.62f,
+        });
+        enemy.AttackPulse = 1f;
+    }
+
+    private void TryAdvanceBossPhase(EnemyActor enemy, IEncounterCallbacks callbacks)
+    {
+        float ratio = enemy.Definition.MaxHealth <= 0.001f ? 1f : enemy.Health / enemy.Definition.MaxHealth;
+        int nextPhase = enemy.Phase;
+        if (enemy.Phase == 1 && ratio <= 0.72f)
+            nextPhase = 2;
+        else if (enemy.Phase == 2 && ratio <= 0.34f)
+            nextPhase = 3;
+
+        if (nextPhase == enemy.Phase)
+            return;
+
+        enemy.Phase = nextPhase;
+        callbacks.OnBossPhaseShift(enemy);
+        QueueBossEscorts(enemy.Phase);
+    }
+
+    private void SpawnBossNova(EnemyActor enemy)
+    {
+        int projectileCount = enemy.Phase switch
+        {
+            1 => 8,
+            2 => 10,
+            _ => 12,
+        };
+        float speed = enemy.Definition.ProjectileSpeed * (enemy.Phase >= 2 ? 1.1f : 1f);
+        for (int index = 0; index < projectileCount; index++)
+        {
+            float angle = Mathf.Tau * index / projectileCount;
+            SpawnHostileProjectile(enemy, angle, speed, Palette.Warning, Palette.Danger);
+        }
+    }
+
+    private void SpawnBossFan(EnemyActor enemy, float targetAngle)
+    {
+        int projectileCount = enemy.Phase >= 3 ? 6 : enemy.Phase >= 2 ? 5 : 4;
+        float spread = enemy.Phase >= 2 ? 0.62f : 0.46f;
+        float speed = enemy.Definition.ProjectileSpeed * (enemy.Phase >= 2 ? 1.16f : 1.04f);
+        for (int index = 0; index < projectileCount; index++)
+        {
+            float t = projectileCount == 1 ? 0f : index / (float)(projectileCount - 1);
+            float angle = Mathf.Lerp(targetAngle - spread, targetAngle + spread, t);
+            SpawnHostileProjectile(enemy, angle, speed, Palette.Warning, Palette.AccentSoft);
+        }
+    }
+
+    private void SpawnBossLance(EnemyActor enemy, float targetAngle)
+    {
+        int volleyCount = enemy.Phase >= 3 ? 5 : 3;
+        float spreadDegrees = enemy.Phase >= 3 ? 14f : 9f;
+        float speed = enemy.Definition.ProjectileSpeed * (enemy.Phase >= 2 ? 1.24f : 1.12f);
+        SpawnProjectileSpread(enemy, targetAngle, volleyCount, spreadDegrees, speed, Palette.Danger, Palette.Warning);
+    }
+
+    private void SpawnBossSpiral(EnemyActor enemy)
+    {
+        int projectileCount = enemy.Phase >= 3 ? 16 : 12;
+        float speed = enemy.Definition.ProjectileSpeed * (enemy.Phase >= 3 ? 1.18f : 1.06f);
+        float offset = enemy.Id * 0.17f + enemy.Phase * 0.22f;
+        for (int index = 0; index < projectileCount; index++)
+        {
+            float angle = offset + Mathf.Tau * index / projectileCount;
+            SpawnHostileProjectile(enemy, angle, speed, Palette.AccentSoft, Palette.Warning);
+        }
+    }
+
+    private void EnsureBossSpawned(IEncounterCallbacks callbacks)
+    {
+        if (_boss != null || _regions.Count == 0)
+            return;
+
+        var region = _regions
+            .OrderByDescending(entry => entry.Kind == WorldZoneKind.HighValue)
+            .ThenByDescending(entry => entry.ThreatLevel)
+            .First();
+        var definition = HostileData.ByType[HostileType.Boss];
+        var boss = new EnemyActor
+        {
+            Id = _enemyId++,
+            Type = HostileType.Boss,
+            Definition = definition,
+            X = _bossSpawn.X,
+            Y = _bossSpawn.Y,
+            HomeX = _bossSpawn.X,
+            HomeY = _bossSpawn.Y,
+            SpawnRegionId = region.Id,
+            SpawnRegionKind = region.Kind,
+            Health = definition.MaxHealth,
+            ContactCooldown = 0.4f,
+            AttackCooldown = 1.8f,
+            Mode = HostileMode.Advance,
+            FacingAngle = -Mathf.Pi / 2f,
+            Phase = 1,
+            Pattern = BossPattern.Nova,
+            PatrolRadius = 42f,
+            PatrolCadence = 1.6f,
+            AlertRadiusScale = 1.25f,
+            LeashRadiusScale = 1.1f,
+            AlertDuration = 8f,
+            SupportAlertRadius = 320f,
+            Alerted = false,
+            AlertTimer = 0f,
+        };
+
+        _boss = boss;
+        _enemies.Add(boss);
+        callbacks.OnBossSpawned(boss);
+    }
+
+    private void QueueBossEscorts(int phase)
+    {
+        var escortTypes = phase switch
+        {
+            2 => new[] { HostileType.Stalker, HostileType.Suppressor, HostileType.Charger },
+            _ => new[] { HostileType.Stalker, HostileType.Stalker, HostileType.Suppressor, HostileType.Charger },
+        };
+
+        foreach (var escortType in escortTypes)
+            _pendingBossEscorts.Enqueue(escortType);
+    }
+
+    private void SpawnQueuedBossEscorts(IEncounterCallbacks callbacks)
+    {
+        if (_pendingBossEscorts.Count == 0 || _boss == null)
+            return;
+
+        var region = _regions.FirstOrDefault(entry => entry.Id == _boss.SpawnRegionId);
+        if (region == null)
+            return;
+
+        var anchors = _spawnAnchors
+            .Where(anchor => anchor.RegionId == region.Id)
+            .OrderBy(anchor => anchor.Position.DistanceTo(new Vector2(_boss.X, _boss.Y)))
+            .ToList();
+
+        while (_pendingBossEscorts.Count > 0)
+        {
+            var escortType = _pendingBossEscorts.Dequeue();
+            var anchor = anchors.FirstOrDefault(candidate =>
+                !_enemies.Any(existing => new Vector2(existing.X, existing.Y).DistanceTo(candidate.Position) < 90f));
+            if (anchor == null)
+                continue;
+
+            SpawnEnemy(anchor, region, escortType, callbacks);
+            anchors.Remove(anchor);
+        }
+    }
+
     private static Vector2 ResolveEnemyTarget(EnemyActor enemy, Vector2 playerPos)
     {
         if (enemy.Alerted)
@@ -467,7 +801,14 @@ public class EncounterManager
     private void SpawnEnemyProjectile(EnemyActor enemy, float dirX, float dirY)
     {
         float angle = Mathf.Atan2(dirY, dirX);
-        SpawnHostileProjectile(enemy, angle, enemy.Definition.ProjectileSpeed, Palette.EnemyProjectile, Palette.AccentSoft);
+        SpawnProjectileSpread(
+            enemy,
+            angle,
+            enemy.Definition.ProjectileCount,
+            enemy.Definition.ProjectileSpreadDegrees,
+            enemy.Definition.ProjectileSpeed,
+            Palette.EnemyProjectile,
+            Palette.AccentSoft);
     }
 
     private void SpawnHostileProjectile(EnemyActor enemy, float angle, float speed, Color color, Color glowColor)
@@ -487,6 +828,24 @@ public class EncounterManager
             DrawColor = color,
             GlowColor = glowColor,
         });
+    }
+
+    private void SpawnProjectileSpread(EnemyActor enemy, float baseAngle, int projectileCount, float spreadDegrees, float speed, Color color, Color glowColor)
+    {
+        int count = Mathf.Max(1, projectileCount);
+        if (count == 1 || spreadDegrees <= 0.001f)
+        {
+            SpawnHostileProjectile(enemy, baseAngle, speed, color, glowColor);
+            return;
+        }
+
+        float spread = Mathf.DegToRad(spreadDegrees);
+        for (int index = 0; index < count; index++)
+        {
+            float t = count == 1 ? 0.5f : index / (float)(count - 1);
+            float angle = Mathf.Lerp(baseAngle - spread, baseAngle + spread, t);
+            SpawnHostileProjectile(enemy, angle, speed, color, glowColor);
+        }
     }
 
     private void UpdateProjectiles(float delta, Vector2 playerPos, float playerRadius, bool playerDashing, IEncounterCallbacks callbacks)
@@ -592,7 +951,11 @@ public class EncounterManager
             return HostileType.Melee;
         if (roll < profile.MeleeWeight + profile.RangedWeight)
             return HostileType.Ranged;
-        return HostileType.Charger;
+        if (roll < profile.MeleeWeight + profile.RangedWeight + profile.ChargerWeight)
+            return HostileType.Charger;
+        if (roll < profile.MeleeWeight + profile.RangedWeight + profile.ChargerWeight + profile.StalkerWeight)
+            return HostileType.Stalker;
+        return HostileType.Suppressor;
     }
 
     private void AlertEnemy(EnemyActor enemy, Vector2 source, float duration, bool propagate = false)
@@ -670,9 +1033,11 @@ public class EncounterManager
         float leashRadiusScale = 0.94f + threat * 0.1f;
         float alertDuration = 2.8f + threat * 0.45f;
         float supportAlertRadius = 150f + threat * 34f;
-        float meleeWeight = threat >= 3 ? 0.34f : 0.46f;
-        float rangedWeight = threat >= 2 ? 0.34f : 0.28f;
-        float chargerWeight = 1f - meleeWeight - rangedWeight;
+        float meleeWeight = threat >= 3 ? 0.28f : 0.34f;
+        float rangedWeight = threat >= 2 ? 0.22f : 0.24f;
+        float chargerWeight = threat >= 2 ? 0.16f : 0.14f;
+        float stalkerWeight = threat >= 2 ? 0.18f : 0.2f;
+        float suppressorWeight = 1f - meleeWeight - rangedWeight - chargerWeight - stalkerWeight;
 
         switch (region.Kind)
         {
@@ -686,9 +1051,11 @@ public class EncounterManager
                 leashRadiusScale -= 0.04f;
                 alertDuration -= 0.2f;
                 supportAlertRadius -= 42f;
-                meleeWeight = 0.68f;
-                rangedWeight = 0.27f;
-                chargerWeight = 0.05f;
+                meleeWeight = 0.34f;
+                rangedWeight = 0.18f;
+                chargerWeight = 0.06f;
+                stalkerWeight = 0.3f;
+                suppressorWeight = 0.12f;
                 break;
             case WorldZoneKind.HighRisk:
                 desiredPopulation += 2;
@@ -700,9 +1067,11 @@ public class EncounterManager
                 leashRadiusScale += 0.16f;
                 alertDuration += 0.6f;
                 supportAlertRadius += 72f;
-                meleeWeight = threat >= 3 ? 0.28f : 0.36f;
-                rangedWeight = threat >= 3 ? 0.28f : 0.32f;
-                chargerWeight = 1f - meleeWeight - rangedWeight;
+                meleeWeight = threat >= 3 ? 0.18f : 0.22f;
+                rangedWeight = threat >= 3 ? 0.14f : 0.18f;
+                chargerWeight = threat >= 3 ? 0.24f : 0.2f;
+                stalkerWeight = 0.2f;
+                suppressorWeight = 1f - meleeWeight - rangedWeight - chargerWeight - stalkerWeight;
                 break;
             case WorldZoneKind.HighValue:
                 desiredPopulation += 1;
@@ -713,9 +1082,11 @@ public class EncounterManager
                 leashRadiusScale += 0.1f;
                 alertDuration += 0.4f;
                 supportAlertRadius += 56f;
-                meleeWeight = 0.22f;
-                rangedWeight = 0.48f;
-                chargerWeight = 0.3f;
+                meleeWeight = 0.14f;
+                rangedWeight = 0.22f;
+                chargerWeight = 0.16f;
+                stalkerWeight = 0.14f;
+                suppressorWeight = 0.34f;
                 break;
             case WorldZoneKind.Extraction:
                 desiredPopulation = Mathf.Max(3, desiredPopulation);
@@ -725,9 +1096,11 @@ public class EncounterManager
                 alertRadiusScale += 0.03f;
                 leashRadiusScale += 0.04f;
                 supportAlertRadius += 18f;
-                meleeWeight = 0.52f;
-                rangedWeight = 0.34f;
+                meleeWeight = 0.24f;
+                rangedWeight = 0.2f;
                 chargerWeight = 0.14f;
+                stalkerWeight = 0.22f;
+                suppressorWeight = 0.2f;
                 break;
         }
 
@@ -745,7 +1118,30 @@ public class EncounterManager
             Mathf.Clamp(supportAlertRadius, 96f, 320f),
             meleeWeight,
             rangedWeight,
-            chargerWeight);
+            chargerWeight,
+            stalkerWeight,
+            suppressorWeight);
+    }
+
+    private static BossPattern GetNextBossPattern(EnemyActor enemy)
+    {
+        return enemy.Phase switch
+        {
+            1 => enemy.Pattern == BossPattern.Nova ? BossPattern.Fan : BossPattern.Nova,
+            2 => enemy.Pattern switch
+            {
+                BossPattern.Nova => BossPattern.Lance,
+                BossPattern.Lance => BossPattern.Fan,
+                _ => BossPattern.Nova,
+            },
+            _ => enemy.Pattern switch
+            {
+                BossPattern.Spiral => BossPattern.Lance,
+                BossPattern.Lance => BossPattern.Fan,
+                BossPattern.Fan => BossPattern.Nova,
+                _ => BossPattern.Spiral,
+            },
+        };
     }
 
     private readonly struct RegionEncounterProfile
@@ -764,7 +1160,9 @@ public class EncounterManager
             float supportAlertRadius,
             float meleeWeight,
             float rangedWeight,
-            float chargerWeight)
+            float chargerWeight,
+            float stalkerWeight,
+            float suppressorWeight)
         {
             DesiredPopulation = desiredPopulation;
             SpawnCooldownMin = spawnCooldownMin;
@@ -780,6 +1178,8 @@ public class EncounterManager
             MeleeWeight = meleeWeight;
             RangedWeight = rangedWeight;
             ChargerWeight = chargerWeight;
+            StalkerWeight = stalkerWeight;
+            SuppressorWeight = suppressorWeight;
         }
 
         public int DesiredPopulation { get; }
@@ -796,5 +1196,7 @@ public class EncounterManager
         public float MeleeWeight { get; }
         public float RangedWeight { get; }
         public float ChargerWeight { get; }
+        public float StalkerWeight { get; }
+        public float SuppressorWeight { get; }
     }
 }

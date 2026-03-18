@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 using Godot;
 using ShotV.Combat;
 using ShotV.Core;
@@ -70,21 +71,23 @@ public partial class CombatScene : Node2D, IPlayerControllerCallbacks, IEncounte
     {
         var currentZone = RouteManager.GetCurrentRunZone(mapState);
         if (currentZone == null) return;
+        var route = RouteData.GetRoute(mapState.RouteId);
 
         _layout = WorldLayoutBuilder.CreateCombatLayout(new CombatLayoutInput
         {
             MapId = mapState.RouteId,
-            MapLabel = RouteData.GetRoute(mapState.RouteId).Label,
+            MapLabel = route.Label,
             Regions = mapState.Zones,
             Seed = mapState.LayoutSeed,
+            ExtractionPointCount = route.ExtractionPointCount,
         });
 
         _player.Reset();
-        _player.SetWeaponStyle(GameManager.Instance?.Store.State.Save.Session.ActiveRun?.Player.CurrentWeaponId ?? WeaponType.MachineGun);
+        _player.SetWeaponStyle(GameManager.Instance?.Store.State.Save.Session.ActiveRun?.Player.CurrentWeaponId ?? WeaponData.GetDefaultWeapon().Id);
         _player.SetPlayerPosition(_layout.PlayerSpawn.X, _layout.PlayerSpawn.Y);
 
         _encounter.Reset();
-        _encounter.Resize(_layout.Bounds, _layout.Obstacles, _layout.Regions, _layout.SpawnAnchors);
+        _encounter.Resize(_layout.Bounds, _layout.Obstacles, _layout.Regions, _layout.SpawnAnchors, _layout.BossSpawn);
 
         _renderer.Bind(_layout, _encounter, _player);
         _dmgText.Reset();
@@ -123,6 +126,7 @@ public partial class CombatScene : Node2D, IPlayerControllerCallbacks, IEncounte
         _hud?.UpdateEnemyStatus(0, 0);
         _hud?.UpdateQuickSlots(run?.Inventory ?? new GridInventoryState());
         _hud?.UpdateLoadout(_controller.Loadout, _controller.CurrentWeapon.Id);
+        _hud?.UpdateArmor(run?.Player.Armor);
         RefreshWeaponRuntime(run);
         _hud?.HideBossHealth();
         _hud?.SetPlayerDown(false);
@@ -147,6 +151,7 @@ public partial class CombatScene : Node2D, IPlayerControllerCallbacks, IEncounte
         _shakeTrauma = Mathf.Max(0f, _shakeTrauma - dt * 2.4f);
 
         var run = GameManager.Instance?.Store.State.Save.Session.ActiveRun;
+        SyncControllerLoadout(run);
         bool fullscreenUi = IsFullscreenUiActive();
         bool actionLocked = _exitAction.IsActive || fullscreenUi;
         if (_hud != null)
@@ -252,6 +257,18 @@ public partial class CombatScene : Node2D, IPlayerControllerCallbacks, IEncounte
     }
 
     private void AddShake(float amount) => _shakeTrauma = Mathf.Min(1f, _shakeTrauma + amount);
+
+    private void SyncControllerLoadout(RunState? run)
+    {
+        if (run == null)
+            return;
+
+        if (_controller.MatchesLoadout(run.Player.LoadoutWeaponIds, run.Player.CurrentWeaponId))
+            return;
+
+        _controller.SyncLoadout(run.Player.LoadoutWeaponIds, run.Player.CurrentWeaponId, this);
+        RefreshWeaponRuntime(run);
+    }
 
     private bool TryPickupNearbyLoot(RunState run)
     {
@@ -391,34 +408,45 @@ public partial class CombatScene : Node2D, IPlayerControllerCallbacks, IEncounte
             return false;
         }
 
-        float spreadDegrees = ResolveShotSpreadDegrees(weapon);
+        if (weaponState.Durability <= 0.5f)
+        {
+            _hud?.ShowHint($"{weapon.Label} 已损坏，需要在基地维修", 1.5f);
+            return false;
+        }
+
+        float spreadDegrees = ResolveShotSpreadDegrees(weapon, weaponState);
+        float damageMultiplier = EquipmentRules.GetWeaponDamageMultiplier(weaponState);
+        int armorPenetrationBonus = EquipmentRules.GetWeaponArmorPenetrationBonus(weaponState);
         weaponState.Magazine = Mathf.Max(0, weaponState.Magazine - 1);
-        RefreshWeaponRuntime(run);
+        weaponState.Durability = Mathf.Max(0f, weaponState.Durability - EquipmentRules.GetWeaponDurabilityLoss(weapon, ammo));
         ApplyShotFeel(weapon);
 
-        switch (weapon.Id)
+        switch (weapon.FireMode)
         {
-            case WeaponType.MachineGun:
-                FireMachineGun(weapon, ammo, aimPoint, spreadDegrees);
-                _encounter.NotifyStimulus(_player.PlayerPosition, 360f);
+            case WeaponFireMode.Automatic:
+                FireMachineGun(weapon, ammo, aimPoint, spreadDegrees, damageMultiplier, armorPenetrationBonus);
+                _encounter.NotifyStimulus(_player.PlayerPosition, weapon.StimulusRadius);
                 run.Player.ShotsFired++;
+                RefreshWeaponRuntime(run);
                 return true;
-            case WeaponType.Sniper:
-                FireSniper(weapon, ammo, aimPoint, spreadDegrees);
-                _encounter.NotifyStimulus(_player.PlayerPosition, 520f);
+            case WeaponFireMode.Precision:
+                FireSniper(weapon, ammo, aimPoint, spreadDegrees, damageMultiplier, armorPenetrationBonus);
+                _encounter.NotifyStimulus(_player.PlayerPosition, weapon.StimulusRadius);
                 run.Player.ShotsFired++;
+                RefreshWeaponRuntime(run);
                 return true;
-            case WeaponType.Grenade:
-                FireGrenade(weapon, ammo, aimPoint, spreadDegrees);
-                _encounter.NotifyStimulus(_player.PlayerPosition, 240f);
+            case WeaponFireMode.Launcher:
+                FireGrenade(weapon, ammo, aimPoint, spreadDegrees, damageMultiplier, armorPenetrationBonus);
+                _encounter.NotifyStimulus(_player.PlayerPosition, weapon.StimulusRadius);
                 run.Player.GrenadesThrown++;
+                RefreshWeaponRuntime(run);
                 return true;
         }
 
         return false;
     }
 
-    private void FireMachineGun(WeaponDefinition weapon, WeaponAmmoDefinition ammo, Vector2 aimPoint, float spreadDegrees)
+    private void FireMachineGun(WeaponDefinition weapon, WeaponAmmoDefinition ammo, Vector2 aimPoint, float spreadDegrees, float damageMultiplier, int armorPenetrationBonus)
     {
         var origin = _player.GetShotOrigin(38f);
         var farTarget = ResolveSpreadTarget(origin, aimPoint, weapon.Range, spreadDegrees);
@@ -427,7 +455,7 @@ public partial class CombatScene : Node2D, IPlayerControllerCallbacks, IEncounte
 
         int hitCapacity = ResolveHitCapacity(ammo);
         for (int index = 0; index < hits.Count && index < hitCapacity; index++)
-            ApplyAmmoHit(hits[index], ammo, index);
+            ApplyAmmoHit(hits[index], ammo, index, damageMultiplier, armorPenetrationBonus);
 
         var trailEnd = hits.Count > hitCapacity && hitCapacity > 0
             ? new Vector2(hits[hitCapacity - 1].PointX, hits[hitCapacity - 1].PointY)
@@ -439,7 +467,7 @@ public partial class CombatScene : Node2D, IPlayerControllerCallbacks, IEncounte
         AddShake(0.02f);
     }
 
-    private void FireSniper(WeaponDefinition weapon, WeaponAmmoDefinition ammo, Vector2 aimPoint, float spreadDegrees)
+    private void FireSniper(WeaponDefinition weapon, WeaponAmmoDefinition ammo, Vector2 aimPoint, float spreadDegrees, float damageMultiplier, int armorPenetrationBonus)
     {
         var origin = _player.GetShotOrigin(38f);
         var farTarget = ResolveSpreadTarget(origin, aimPoint, weapon.Range, spreadDegrees);
@@ -448,7 +476,7 @@ public partial class CombatScene : Node2D, IPlayerControllerCallbacks, IEncounte
 
         int hitCapacity = ResolveHitCapacity(ammo);
         for (int index = 0; index < hits.Count && index < hitCapacity; index++)
-            ApplyAmmoHit(hits[index], ammo, index);
+            ApplyAmmoHit(hits[index], ammo, index, damageMultiplier, armorPenetrationBonus);
 
         var trailEnd = hits.Count > hitCapacity && hitCapacity > 0
             ? new Vector2(hits[hitCapacity - 1].PointX, hits[hitCapacity - 1].PointY)
@@ -460,22 +488,18 @@ public partial class CombatScene : Node2D, IPlayerControllerCallbacks, IEncounte
         AddShake(0.06f);
     }
 
-    private void FireGrenade(WeaponDefinition weapon, WeaponAmmoDefinition ammo, Vector2 aimPoint, float spreadDegrees)
+    private void FireGrenade(WeaponDefinition weapon, WeaponAmmoDefinition ammo, Vector2 aimPoint, float spreadDegrees, float damageMultiplier, int armorPenetrationBonus)
     {
         var origin = _player.GetShotOrigin(38f);
         var jitteredTarget = ResolveSpreadTarget(origin, aimPoint, weapon.Range, spreadDegrees, preserveDistance: true);
         var landingPoint = ResolveGrenadeLandingPoint(origin, jitteredTarget);
         float duration = Mathf.Lerp(0.22f, 0.46f, Mathf.Clamp(origin.DistanceTo(landingPoint) / Mathf.Max(1f, weapon.Range), 0f, 1f));
-        _vfx.SpawnGrenade(origin, landingPoint, weapon.SplashRadius, ammo.Damage, ammo.ArmorPenetration, ammo.PierceCount, duration);
+        _vfx.SpawnGrenade(origin, landingPoint, weapon.SplashRadius, ammo.Damage * damageMultiplier, ammo.ArmorPenetration + armorPenetrationBonus, ammo.PierceCount, duration);
         _vfx.SpawnRing(origin.X, origin.Y, 8, 26, 0.16f, ResolveAmmoFeedbackColor(ammo), 3f);
         AddShake(0.07f);
     }
 
     // IEncounterCallbacks
-    public void OnWaveStarted(int waveIndex, string hint)
-    {
-    }
-
     public void OnEnemySpawned(HostileType type)
     {
         var run = GameManager.Instance?.Store.State.Save.Session.ActiveRun;
@@ -509,9 +533,15 @@ public partial class CombatScene : Node2D, IPlayerControllerCallbacks, IEncounte
 
     public void OnBossAttack(BossPattern pattern, EnemyActor enemy, float? targetAngle)
     {
-        float radius = pattern == BossPattern.Fan ? 88f : 112f;
+        float radius = pattern switch
+        {
+            BossPattern.Fan => 88f,
+            BossPattern.Lance => 96f,
+            BossPattern.Spiral => 126f,
+            _ => 112f,
+        };
         _vfx.SpawnRing(enemy.X, enemy.Y, 20, radius, 0.24f, Palette.AccentSoft, 3f);
-        AddShake(pattern == BossPattern.Fan ? 0.08f : 0.16f);
+        AddShake(pattern is BossPattern.Fan or BossPattern.Lance ? 0.08f : 0.16f);
     }
 
     public void OnEnemyHit(EnemyActor enemy, float amount, float impactX, float impactY)
@@ -557,11 +587,28 @@ public partial class CombatScene : Node2D, IPlayerControllerCallbacks, IEncounte
         if (run == null) return;
         if (_player.IsDashing) return;
 
-        run.Player.Health = Mathf.Max(0f, run.Player.Health - amount);
-        run.Player.DamageTaken += amount;
+        float blocked = 0f;
+        bool armorBroke = false;
+        if (!string.IsNullOrWhiteSpace(run.Player.Armor.ArmorId) && run.Player.Armor.Durability > 0.01f)
+        {
+            blocked = amount * EquipmentRules.GetArmorMitigation(run.Player.Armor);
+            float beforeDurability = run.Player.Armor.Durability;
+            run.Player.Armor.DamageAbsorbed += blocked;
+            run.Player.Armor.Durability = Mathf.Max(0f, run.Player.Armor.Durability - EquipmentRules.GetArmorDurabilityLoss(run.Player.Armor, amount, blocked));
+            armorBroke = beforeDurability > 0.01f && run.Player.Armor.Durability <= 0.01f;
+        }
+
+        float appliedDamage = Mathf.Max(0f, amount - blocked);
+        run.Player.Health = Mathf.Max(0f, run.Player.Health - appliedDamage);
+        run.Player.DamageTaken += appliedDamage;
         _player.SetLifeRatio(run.Player.Health / run.Player.MaxHealth);
         _player.FlashDamage(1f);
         _hud?.UpdateHealth(run.Player.Health, run.Player.MaxHealth);
+        _hud?.UpdateArmor(run.Player.Armor);
+        if (blocked > 0.5f)
+            _dmgText.SpawnStatusText(_player.PlayerPosition.X, _player.PlayerPosition.Y - 26f, $"-{Mathf.RoundToInt(blocked)} ARM", Palette.Frame);
+        if (armorBroke)
+            _hud?.ShowHint("护甲已被打穿，返回基地维修", 2f);
         _vfx.SpawnRing(_player.PlayerPosition.X, _player.PlayerPosition.Y, 8, 36, 0.16f, Palette.Danger, 2.5f);
         AddShake(0.06f);
 
@@ -593,8 +640,13 @@ public partial class CombatScene : Node2D, IPlayerControllerCallbacks, IEncounte
         _hud?.UpdateEnemyStatus(_encounter.Enemies.Count, _encounter.PendingSpawnCount);
         _hud?.UpdateQuickSlots(run.Inventory);
         _hud?.UpdateLoadout(_controller.Loadout, _controller.CurrentWeapon.Id);
+        _hud?.UpdateArmor(run.Player.Armor);
         RefreshWeaponRuntime(run);
-        _hud?.HideBossHealth();
+        var boss = _encounter.GetBoss();
+        if (boss != null)
+            _hud?.ShowBossHealth(boss.Definition.Label, boss.Health, boss.Definition.MaxHealth, boss.Phase);
+        else
+            _hud?.HideBossHealth();
         _hud?.SetPlayerDown(_encounter.State == EncounterState.Down);
     }
 
@@ -623,7 +675,6 @@ public partial class CombatScene : Node2D, IPlayerControllerCallbacks, IEncounte
         else
         {
             var exitMarker = FindNearbyExitMarker();
-            bool canExtract = RouteManager.CanExtractFromRunMap(run.Map);
             var currentZone = RouteManager.GetCurrentRunZone(run.Map);
 
             if (exitMarker != null)
@@ -633,7 +684,7 @@ public partial class CombatScene : Node2D, IPlayerControllerCallbacks, IEncounte
                 nearbyMarkerKind = MarkerKind.Extraction;
             }
 
-            primaryReady = !_exitAction.IsActive && exitMarker != null && canExtract;
+            primaryReady = !_exitAction.IsActive && exitMarker != null && RouteManager.CanExtractFromRunMap(run.Map);
 
             if (_exitAction.IsActive)
             {
@@ -645,13 +696,9 @@ public partial class CombatScene : Node2D, IPlayerControllerCallbacks, IEncounte
                     ? GameText.Format("combat.hint.current_zone", currentZone.Label, currentZone.ThreatLevel)
                     : GameText.Text("combat.hint.open_area");
             }
-            else if (canExtract)
-            {
-                hint = GameText.Text("combat.extract_and_settle");
-            }
             else
             {
-                hint = GameText.Text("combat.clear_zone_for_exit");
+                hint = GameText.Text("combat.extract_and_settle");
             }
         }
 
@@ -741,16 +788,22 @@ public partial class CombatScene : Node2D, IPlayerControllerCallbacks, IEncounte
 
     private (string id, string label)? FindNearbyExitMarker()
     {
+        (string id, string label)? closest = null;
+        float closestDistance = 120f;
         foreach (var marker in _layout.Markers)
         {
             if (marker.Kind != MarkerKind.Extraction)
                 continue;
 
-            if (_player.PlayerPosition.DistanceTo(new Vector2(marker.X, marker.Y)) <= 120f)
-                return (marker.Id, marker.Label);
+            float distance = _player.PlayerPosition.DistanceTo(new Vector2(marker.X, marker.Y));
+            if (distance > closestDistance)
+                continue;
+
+            closestDistance = distance;
+            closest = (marker.Id, marker.Label);
         }
 
-        return null;
+        return closest;
     }
 
     private RunZoneState? SyncCurrentRegion(RunState? run)
@@ -1035,17 +1088,18 @@ public partial class CombatScene : Node2D, IPlayerControllerCallbacks, IEncounte
         _player.SetReticleBloom(ResolveSpreadRatio(weapon));
     }
 
-    private void ApplyAmmoHit(SegmentHit hit, WeaponAmmoDefinition ammo, int hitIndex)
+    private void ApplyAmmoHit(SegmentHit hit, WeaponAmmoDefinition ammo, int hitIndex, float damageMultiplier, int armorPenetrationBonus)
     {
-        float armorScale = ResolveArmorScale(ammo, hit.Enemy.Definition);
-        float damage = ammo.Damage * armorScale;
+        int effectiveArmorPenetration = ammo.ArmorPenetration + armorPenetrationBonus;
+        float armorScale = ResolveArmorScale(effectiveArmorPenetration, hit.Enemy.Definition);
+        float damage = ammo.Damage * damageMultiplier * armorScale;
         _encounter.DamageEnemy(hit.Enemy, damage, hit.PointX, hit.PointY, this);
 
         var feedbackColor = ResolveAmmoFeedbackColor(ammo);
         _vfx.SpawnParticles(hit.PointX, hit.PointY, 4 + Mathf.Min(3, ammo.PierceCount), feedbackColor);
         _player.TriggerHitConfirm(armorScale >= 1f ? 0.7f : 0.42f);
 
-        int armorGap = Mathf.Max(0, hit.Enemy.Definition.ArmorLevel - ammo.ArmorPenetration);
+        int armorGap = Mathf.Max(0, hit.Enemy.Definition.ArmorLevel - effectiveArmorPenetration);
         if (hit.Enemy.Definition.ArmorLevel > 0)
         {
             string? status = armorGap switch
@@ -1066,17 +1120,20 @@ public partial class CombatScene : Node2D, IPlayerControllerCallbacks, IEncounte
             _dmgText.SpawnStatusText(hit.PointX, hit.PointY - 12f, GameText.Text("combat.status.pierce"), feedbackColor);
     }
 
-    private float ResolveShotSpreadDegrees(WeaponDefinition weapon)
+    private float ResolveShotSpreadDegrees(WeaponDefinition weapon, PlayerRunState.PlayerWeaponState? state)
     {
         float moveSpread = weapon.MoveSpreadDegrees * (_player.IsDashing ? 1f : _moveSpreadRatio);
-        return Mathf.Clamp(weapon.BaseSpreadDegrees + _weaponSpreadBloom + moveSpread, 0f, weapon.MaxSpreadDegrees);
+        float spread = weapon.BaseSpreadDegrees + _weaponSpreadBloom + moveSpread;
+        if (state != null)
+            spread *= EquipmentRules.GetWeaponSpreadMultiplier(state);
+        return Mathf.Clamp(spread, 0f, weapon.MaxSpreadDegrees * 1.8f);
     }
 
     private float ResolveSpreadRatio(WeaponDefinition weapon)
     {
         return weapon.MaxSpreadDegrees <= 0.001f
             ? 0f
-            : Mathf.Clamp(ResolveShotSpreadDegrees(weapon) / weapon.MaxSpreadDegrees, 0f, 1f);
+            : Mathf.Clamp(ResolveShotSpreadDegrees(weapon, GameManager.Instance?.Store.State.Save.Session.ActiveRun?.Player.WeaponStates.FirstOrDefault(state => state.WeaponId == weapon.Id)) / weapon.MaxSpreadDegrees, 0f, 1f);
     }
 
     private Vector2 ResolveSpreadTarget(Vector2 origin, Vector2 aimPoint, float range, float spreadDegrees, bool preserveDistance = false)
@@ -1106,9 +1163,9 @@ public partial class CombatScene : Node2D, IPlayerControllerCallbacks, IEncounte
         return Mathf.Max(1, ammo.PierceCount + 1);
     }
 
-    private static float ResolveArmorScale(WeaponAmmoDefinition ammo, HostileDefinition target)
+    private static float ResolveArmorScale(int armorPenetration, HostileDefinition target)
     {
-        int gap = Mathf.Max(0, target.ArmorLevel - ammo.ArmorPenetration);
+        int gap = Mathf.Max(0, target.ArmorLevel - armorPenetration);
         return gap switch
         {
             0 => 1f,

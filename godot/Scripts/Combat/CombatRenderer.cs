@@ -39,6 +39,26 @@ public partial class CombatRenderer : Node2D
         new(15f, 0f), new(-6f, -14f), new(-10f, -6f), new(-10f, 6f), new(-6f, 14f),
     };
 
+    private static readonly Vector2[] StalkerGlowShape =
+    {
+        new(0f, -20f), new(16f, -8f), new(10f, 18f), new(-10f, 18f), new(-16f, -8f),
+    };
+
+    private static readonly Vector2[] StalkerShellShape =
+    {
+        new(0f, -15f), new(12f, -6f), new(8f, 14f), new(-8f, 14f), new(-12f, -6f),
+    };
+
+    private static readonly Vector2[] SuppressorGlowShape =
+    {
+        new(-18f, -16f), new(10f, -20f), new(20f, 0f), new(10f, 20f), new(-18f, 16f),
+    };
+
+    private static readonly Vector2[] SuppressorShellShape =
+    {
+        new(-13f, -12f), new(8f, -15f), new(15f, 0f), new(8f, 15f), new(-13f, 12f),
+    };
+
     private static readonly Vector2[] BossGlowShape =
     {
         new(22f, 0f), new(10f, -22f), new(-12f, -22f), new(-24f, 0f), new(-12f, 22f), new(10f, 22f),
@@ -64,6 +84,16 @@ public partial class CombatRenderer : Node2D
         new(6f, 0f), new(-4f, -5f), new(-1f, 0f), new(-4f, 5f),
     };
 
+    private static readonly Vector2[] StalkerCoreShape =
+    {
+        new(0f, -6f), new(5f, 2f), new(0f, 6f), new(-5f, 2f),
+    };
+
+    private static readonly Vector2[] SuppressorCoreShape =
+    {
+        new(7f, 0f), new(-3f, -6f), new(-6f, 0f), new(-3f, 6f),
+    };
+
     private static readonly Vector2[] BossCoreShape =
     {
         new(10f, 0f), new(-6f, -7f), new(-1f, 0f), new(-6f, 7f),
@@ -82,6 +112,16 @@ public partial class CombatRenderer : Node2D
     private static readonly Vector2[] ChargerAimShape =
     {
         new(13f, 0f), new(-5f, -4f), new(-1f, 0f), new(-5f, 4f),
+    };
+
+    private static readonly Vector2[] StalkerAimShape =
+    {
+        new(11f, 0f), new(-4f, -5f), new(-2f, 0f), new(-4f, 5f),
+    };
+
+    private static readonly Vector2[] SuppressorAimShape =
+    {
+        new(15f, 0f), new(-6f, -4f), new(-2f, 0f), new(-6f, 4f),
     };
 
     private static readonly Vector2[] BossAimShape =
@@ -288,8 +328,8 @@ public partial class CombatRenderer : Node2D
             float sway = Mathf.Sin(elapsed * 4.4f + enemy.Id * 0.71f) * 0.035f;
             float shellScale = 1f + enemy.AttackPulse * 0.06f + modePulse * 0.04f;
             float glowScale = 1f + modePulse * 0.16f + enemy.DamageFlash * 0.12f;
-            float bodyFacing = enemy.Type is HostileType.Charger or HostileType.Boss ? enemy.FacingAngle : 0f;
-            float bodyWobble = enemy.Type is HostileType.Charger or HostileType.Boss
+            float bodyFacing = enemy.Type is HostileType.Charger or HostileType.Stalker or HostileType.Suppressor or HostileType.Boss ? enemy.FacingAngle : 0f;
+            float bodyWobble = enemy.Type is HostileType.Charger or HostileType.Stalker or HostileType.Suppressor or HostileType.Boss
                 ? sway * 0.35f
                 : sway + (enemy.LifeRatio - 0.5f) * 0.03f;
 
@@ -377,6 +417,8 @@ public partial class CombatRenderer : Node2D
         HostileType.Melee => MeleeGlowShape,
         HostileType.Ranged => RangedGlowShape,
         HostileType.Charger => ChargerGlowShape,
+        HostileType.Stalker => StalkerGlowShape,
+        HostileType.Suppressor => SuppressorGlowShape,
         _ => BossGlowShape,
     };
 
@@ -385,6 +427,8 @@ public partial class CombatRenderer : Node2D
         HostileType.Melee => MeleeShellShape,
         HostileType.Ranged => RangedShellShape,
         HostileType.Charger => ChargerShellShape,
+        HostileType.Stalker => StalkerShellShape,
+        HostileType.Suppressor => SuppressorShellShape,
         _ => BossShellShape,
     };
 
@@ -393,6 +437,8 @@ public partial class CombatRenderer : Node2D
         HostileType.Melee => MeleeCoreShape,
         HostileType.Ranged => RangedCoreShape,
         HostileType.Charger => ChargerCoreShape,
+        HostileType.Stalker => StalkerCoreShape,
+        HostileType.Suppressor => SuppressorCoreShape,
         _ => BossCoreShape,
     };
 
@@ -401,6 +447,8 @@ public partial class CombatRenderer : Node2D
         HostileType.Melee => MeleeAimShape,
         HostileType.Ranged => RangedAimShape,
         HostileType.Charger => ChargerAimShape,
+        HostileType.Stalker => StalkerAimShape,
+        HostileType.Suppressor => SuppressorAimShape,
         _ => BossAimShape,
     };
 

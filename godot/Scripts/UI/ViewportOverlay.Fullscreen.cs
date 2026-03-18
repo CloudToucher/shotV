@@ -385,6 +385,7 @@ public partial class ViewportOverlay
         {
             ScenePanelMode.Locker => GameText.Text("fullscreen.panel.title.locker"),
             ScenePanelMode.Workshop => GameText.Text("fullscreen.panel.title.workshop"),
+            ScenePanelMode.Maintenance => "维修 / 保养",
             ScenePanelMode.Command => GameText.Text("fullscreen.panel.title.command"),
             ScenePanelMode.Launch => GameText.Text("fullscreen.panel.title.launch"),
             ScenePanelMode.CombatInventory => GameText.Text("fullscreen.panel.title.combat_inventory"),
@@ -398,6 +399,7 @@ public partial class ViewportOverlay
             ScenePanelMode.CombatInventory when activeRun != null => $"{currentRoute.Label} / {currentZone?.Label ?? activeRun.Map.CurrentZoneId}",
             ScenePanelMode.Command => GameText.Format("fullscreen.panel.meta.selected_map", selectedRoute.Label),
             ScenePanelMode.Workshop => GameText.Text("fullscreen.panel.meta.workshop"),
+            ScenePanelMode.Maintenance => "恢复武器和护甲耐久。维修消耗基地资源，不改动背包内容。",
             ScenePanelMode.Locker => GameText.Format("fullscreen.panel.meta.stored_items", state.Save.Inventory.StoredItems.Count),
             ScenePanelMode.Launch => GameText.Format("fullscreen.panel.meta.deployment_target", selectedRoute.Label, state.Save.Inventory.DeploymentPack.Items.Count),
             _ => state.Mode == GameMode.Base ? BuildMapSummary(selectedRoute) : BuildSceneHint(state),
@@ -445,6 +447,9 @@ public partial class ViewportOverlay
             case ScenePanelMode.Workshop:
                 BuildWorkshopPanel(state);
                 break;
+            case ScenePanelMode.Maintenance:
+                BuildMaintenancePanel(state);
+                break;
             case ScenePanelMode.Command:
                 BuildCommandPanel(state.Save.World.SelectedRouteId);
                 break;
@@ -464,31 +469,41 @@ public partial class ViewportOverlay
     private void BuildOverviewPanel(GameState state, WorldRouteDefinition selectedRoute, WorldRouteDefinition currentRoute, RunZoneState? currentZone, RunState? activeRun)
     {
         var split = new HBoxContainer();
-        split.AddThemeConstantOverride("separation", 24);
+        split.AddThemeConstantOverride("separation", 18);
         split.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
         _panelContentContainer.AddChild(split);
 
         var leftCol = new VBoxContainer();
-        leftCol.AddThemeConstantOverride("separation", 12);
-        leftCol.CustomMinimumSize = new Vector2(300f, 0f);
+        leftCol.AddThemeConstantOverride("separation", 10);
+        leftCol.CustomMinimumSize = new Vector2(340f, 0f);
         split.AddChild(leftCol);
 
         var rightCol = new VBoxContainer();
-        rightCol.AddThemeConstantOverride("separation", 12);
+        rightCol.AddThemeConstantOverride("separation", 10);
         rightCol.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
         split.AddChild(rightCol);
 
         if (state.Mode == GameMode.Base)
         {
-            AddCardTo(leftCol, GameText.Text("fullscreen.card.resources"), FormatBaseResources(state.Save.Base.Resources), string.Empty);
-            AddCardTo(leftCol, GameText.Text("fullscreen.card.map"), $"{selectedRoute.Label}\n区域：{selectedRoute.Zones.Length}", string.Empty);
-            AddCardTo(leftCol, GameText.Text("fullscreen.card.stash"), $"物品：{state.Save.Inventory.StoredItems.Count}\n已知区域：{state.Save.World.DiscoveredZones.Count}", string.Empty);
+            int highestThreat = selectedRoute.Zones.Length > 0 ? selectedRoute.Zones.Max(zone => zone.ThreatLevel) : 0;
+            leftCol.AddChild(CreateBaseMetricPane(GameText.Text("fullscreen.card.resources"), FormatBaseResources(state.Save.Base.Resources)));
+            leftCol.AddChild(CreateBaseMetricPane(
+                GameText.Text("fullscreen.card.workshop"),
+                FormatLoadout(state.Save.Inventory.EquippedWeaponIds),
+                FormatEquippedArmorSummary(state.Save.Inventory)));
 
-            AddCardTo(rightCol, GameText.Text("fullscreen.card.selected_map"), selectedRoute.Label, BuildMapSummary(selectedRoute));
-            AddCardTo(rightCol, GameText.Text("fullscreen.card.current_stash"), GameText.Format("fullscreen.locker.info_value", state.Save.Inventory.StoredItems.Count), GameText.Text("fullscreen.card.current_stash_meta"));
-            AddCardTo(rightCol, GameText.Text("fullscreen.card.workshop"), FormatLoadout(state.Save.Inventory.EquippedWeaponIds), GameText.Text("fullscreen.card.workshop_meta"));
-            if (state.Save.Session.LastExtraction != null)
-                AddCardTo(rightCol, GameText.Text("fullscreen.card.last_extraction"), FormatOutcome(state.Save.Session.LastExtraction.Outcome), state.Save.Session.LastExtraction.SummaryLabel);
+            rightCol.AddChild(CreateBaseMetricPane(
+                GameText.Text("fullscreen.card.selected_map"),
+                selectedRoute.Label,
+                $"威胁 {highestThreat} / 区域 {selectedRoute.Zones.Length} / 撤离点 {selectedRoute.ExtractionPointCount}"));
+            rightCol.AddChild(CreateBaseMetricPane(
+                GameText.Text("fullscreen.card.current_stash"),
+                $"仓储 {state.Save.Inventory.StoredItems.Count}",
+                $"部署包 {state.Save.Inventory.DeploymentPack.Items.Count} / 已知区域 {state.Save.World.DiscoveredZones.Count}"));
+            rightCol.AddChild(CreateBaseMetricPane(
+                GameText.Text("fullscreen.card.last_extraction"),
+                state.Save.Session.LastExtraction != null ? FormatOutcome(state.Save.Session.LastExtraction.Outcome) : "暂无",
+                state.Save.Session.LastExtraction?.SummaryLabel ?? string.Empty));
             return;
         }
 
@@ -507,24 +522,20 @@ public partial class ViewportOverlay
 
     private void BuildLockerPanel(InventoryState inventory)
     {
-        var split = new HBoxContainer();
-        split.AddThemeConstantOverride("separation", 24);
-        split.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
-        _panelContentContainer.AddChild(split);
+        var layout = new VBoxContainer();
+        layout.AddThemeConstantOverride("separation", 12);
+        layout.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+        layout.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
+        _panelContentContainer.AddChild(layout);
 
-        var infoCol = new VBoxContainer();
-        infoCol.AddThemeConstantOverride("separation", 12);
-        infoCol.CustomMinimumSize = new Vector2(300f, 0f);
-        split.AddChild(infoCol);
+        var summaryRow = new HBoxContainer();
+        summaryRow.AddThemeConstantOverride("separation", 10);
+        layout.AddChild(summaryRow);
 
-        var contentCol = new VBoxContainer();
-        contentCol.AddThemeConstantOverride("separation", 12);
-        contentCol.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
-        split.AddChild(contentCol);
+        summaryRow.AddChild(CreateBaseMetricPane("仓储", inventory.StoredItems.Count.ToString(), $"{inventory.StashColumns} x {inventory.StashRows}"));
+        summaryRow.AddChild(CreateBaseMetricPane("部署包", inventory.DeploymentPack.Items.Count.ToString(), $"{inventory.DeploymentPack.Columns} x {inventory.DeploymentPack.Rows}"));
 
-        AddCardTo(infoCol, GameText.Text("fullscreen.locker.info_title"), GameText.Format("fullscreen.locker.info_value", inventory.StoredItems.Count), GameText.Text("fullscreen.locker.info_meta"));
-        
-        BuildLockerInventoryContent(contentCol, inventory);
+        BuildLockerInventoryContent(layout, inventory);
     }
 
     private void BuildWorkshopPanel(GameState state)
@@ -532,26 +543,59 @@ public partial class ViewportOverlay
         var inventory = state.Save.Inventory;
 
         var split = new HBoxContainer();
-        split.AddThemeConstantOverride("separation", 24);
+        split.AddThemeConstantOverride("separation", 18);
         split.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
         _panelContentContainer.AddChild(split);
 
         var weaponsCol = new VBoxContainer();
-        weaponsCol.AddThemeConstantOverride("separation", 12);
+        weaponsCol.AddThemeConstantOverride("separation", 10);
         weaponsCol.CustomMinimumSize = new Vector2(340f, 0f);
         split.AddChild(weaponsCol);
 
-        var header = CreateLabel(14, Palette.UiText, true, 0.4f, false);
-        header.Text = GameText.Text("fullscreen.workshop.header");
-        weaponsCol.AddChild(header);
+        weaponsCol.AddChild(CreateBaseMetricPane("武器槽", $"{inventory.EquippedWeaponIds.Count}/{WeaponData.MaxLoadoutSize}", $"可选 {WeaponData.Catalog.Length}"));
 
         for (int index = 0; index < inventory.EquippedWeaponIds.Count; index++)
         {
             int weaponIndex = index;
             var weaponId = inventory.EquippedWeaponIds[index];
             var weapon = WeaponData.ById[weaponId];
-            var card = CreateContentCard(GameText.Text("fullscreen.workshop.weapon_slot"), $"{index + 1}. {weapon.Label}", weapon.Hint);
+            var weaponState = inventory.WeaponStates.FirstOrDefault(stateEntry => stateEntry.WeaponId == weaponId);
+            int upgradeLevel = weaponState?.UpgradeLevel ?? 0;
+            int nextWeaponLevel = upgradeLevel + 1;
+            var upgradeCost = nextWeaponLevel <= EquipmentRules.MaxWeaponUpgradeLevel
+                ? EquipmentRules.GetWeaponUpgradeCost(weapon, nextWeaponLevel)
+                : ResourceBundle.Zero();
+            var card = CreateCombatInventoryPane();
+            weaponsCol.AddChild(card);
             var body = card.GetChild<VBoxContainer>(0);
+            body.AddThemeConstantOverride("separation", 6);
+
+            var titleLabel = CreateLabel(14, Palette.UiText, true, 0.2f, true);
+            titleLabel.Text = $"{index + 1}  {weapon.Label}";
+            body.AddChild(titleLabel);
+
+            var statusLabel = CreateLabel(11, new Color(Palette.UiText, 0.6f), false, 0.2f, true);
+            statusLabel.Text = $"耐久 {Mathf.RoundToInt(weaponState?.Durability ?? weapon.MaxDurability)}/{Mathf.RoundToInt(weaponState?.MaxDurability ?? weapon.MaxDurability)} / 改装 {upgradeLevel}/{EquipmentRules.MaxWeaponUpgradeLevel}";
+            body.AddChild(statusLabel);
+
+            var upgradeLabel = CreateLabel(11, new Color(Palette.UiText, 0.5f), false, 0.2f, true);
+            upgradeLabel.Text = nextWeaponLevel <= EquipmentRules.MaxWeaponUpgradeLevel
+                ? FormatCompactResourceBundle(upgradeCost)
+                : "已满级";
+            body.AddChild(upgradeLabel);
+
+            var cycleRow = new HBoxContainer();
+            cycleRow.AddThemeConstantOverride("separation", 8);
+            body.AddChild(cycleRow);
+
+            bool canCycleWeapon = WeaponData.Catalog.Length > 1;
+            var prevWeaponButton = CreateSmallButton(GameText.Text("fullscreen.workshop.prev_weapon"), canCycleWeapon);
+            prevWeaponButton.Pressed += () => GameManager.Instance?.Store?.CycleEquippedWeapon(weaponIndex, -1);
+            cycleRow.AddChild(prevWeaponButton);
+
+            var nextWeaponButton = CreateSmallButton(GameText.Text("fullscreen.workshop.next_weapon"), canCycleWeapon);
+            nextWeaponButton.Pressed += () => GameManager.Instance?.Store?.CycleEquippedWeapon(weaponIndex, 1);
+            cycleRow.AddChild(nextWeaponButton);
 
             var actionRow = new HBoxContainer();
             actionRow.AddThemeConstantOverride("separation", 8);
@@ -565,17 +609,77 @@ public partial class ViewportOverlay
             downButton.Pressed += () => GameManager.Instance?.Store?.MoveEquippedWeapon(weaponIndex, weaponIndex + 1);
             actionRow.AddChild(downButton);
 
-            weaponsCol.AddChild(card);
+            bool canUpgradeWeapon = weaponState != null
+                && weaponState.UpgradeLevel < EquipmentRules.MaxWeaponUpgradeLevel
+                && CanAfford(state.Save.Base.Resources, upgradeCost);
+            var upgradeButton = CreateSmallButton(canUpgradeWeapon ? "升级" : "无法升级", canUpgradeWeapon);
+            upgradeButton.Pressed += () => GameManager.Instance?.Store?.UpgradeWeapon(weaponId);
+            actionRow.AddChild(upgradeButton);
+        }
+
+        var armorCol = new VBoxContainer();
+        armorCol.AddThemeConstantOverride("separation", 10);
+        armorCol.CustomMinimumSize = new Vector2(320f, 0f);
+        split.AddChild(armorCol);
+
+        armorCol.AddChild(CreateBaseMetricPane("护甲", string.IsNullOrWhiteSpace(inventory.EquippedArmorId) ? "未装备" : ArmorData.ById.TryGetValue(inventory.EquippedArmorId, out var equippedArmor) ? equippedArmor.Label : "未装备", $"持有 {inventory.OwnedArmorIds.Count}"));
+
+        foreach (var armorId in inventory.OwnedArmorIds.Where(ArmorData.ById.ContainsKey))
+        {
+            var armor = ArmorData.ById[armorId];
+            var armorState = inventory.ArmorStates.FirstOrDefault(stateEntry => stateEntry.ArmorId == armorId);
+            int nextArmorLevel = (armorState?.UpgradeLevel ?? 0) + 1;
+            var upgradeCost = nextArmorLevel <= EquipmentRules.MaxArmorUpgradeLevel
+                ? EquipmentRules.GetArmorUpgradeCost(armor, nextArmorLevel)
+                : ResourceBundle.Zero();
+            bool equipped = inventory.EquippedArmorId == armorId;
+
+            var card = CreateCombatInventoryPane();
+            armorCol.AddChild(card);
+            var body = card.GetChild<VBoxContainer>(0);
+            body.AddThemeConstantOverride("separation", 6);
+
+            var titleLabel = CreateLabel(14, Palette.UiText, true, 0.2f, true);
+            titleLabel.Text = armor.Label;
+            body.AddChild(titleLabel);
+
+            var statusLabel = CreateLabel(11, equipped ? Palette.Accent : new Color(Palette.UiText, 0.56f), false, 0.2f, true);
+            statusLabel.Text = armorState != null
+                ? $"{(equipped ? "已装备" : "待命")} / 耐久 {Mathf.RoundToInt(armorState.Durability)}/{Mathf.RoundToInt(armorState.MaxDurability)} / 改装 {armorState.UpgradeLevel}/{EquipmentRules.MaxArmorUpgradeLevel}"
+                : (equipped ? "已装备" : "待命");
+            body.AddChild(statusLabel);
+
+            var statsLabel = CreateLabel(11, new Color(Palette.UiText, 0.52f), false, 0.2f, true);
+            int mitigation = Mathf.RoundToInt((armor.Mitigation + (armorState?.UpgradeLevel ?? 0) * 0.035f) * 100f);
+            statsLabel.Text = $"减伤 {mitigation}% / 额外生命 {Mathf.RoundToInt(armor.MaxHealthBonus)}";
+            body.AddChild(statsLabel);
+
+            var costLabel = CreateLabel(11, new Color(Palette.UiText, 0.5f), false, 0.2f, true);
+            costLabel.Text = nextArmorLevel <= EquipmentRules.MaxArmorUpgradeLevel ? FormatCompactResourceBundle(upgradeCost) : "已满级";
+            body.AddChild(costLabel);
+
+            var actionRow = new HBoxContainer();
+            actionRow.AddThemeConstantOverride("separation", 8);
+            body.AddChild(actionRow);
+
+            var equipButton = CreateSmallButton(equipped ? "已装备" : "装备", !equipped);
+            equipButton.Pressed += () => GameManager.Instance?.Store?.SelectEquippedArmor(armorId);
+            actionRow.AddChild(equipButton);
+
+            bool canUpgradeArmor = armorState != null
+                && armorState.UpgradeLevel < EquipmentRules.MaxArmorUpgradeLevel
+                && CanAfford(state.Save.Base.Resources, upgradeCost);
+            var upgradeButton = CreateSmallButton(canUpgradeArmor ? "升级" : "无法升级", canUpgradeArmor);
+            upgradeButton.Pressed += () => GameManager.Instance?.Store?.UpgradeArmor(armorId);
+            actionRow.AddChild(upgradeButton);
         }
 
         var fabCol = new VBoxContainer();
-        fabCol.AddThemeConstantOverride("separation", 12);
+        fabCol.AddThemeConstantOverride("separation", 10);
         fabCol.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
         split.AddChild(fabCol);
 
-        var fabHeader = CreateLabel(14, Palette.UiText, true, 0.4f, false);
-        fabHeader.Text = GameText.Text("fullscreen.workshop.fabrication");
-        fabCol.AddChild(fabHeader);
+        fabCol.AddChild(CreateBaseMetricPane("制作", ItemData.Catalog.Count(item => item.CraftCost != null).ToString(), "蓝图"));
 
         var fabScroll = new ScrollContainer
         {
@@ -592,35 +696,54 @@ public partial class ViewportOverlay
 
         foreach (var definition in ItemData.Catalog.Where(item => item.CraftCost != null))
         {
-            var card = CreateContentCard(GameText.Text("fullscreen.workshop.blueprint"), definition.Label, definition.Description);
+            var card = CreateCombatInventoryPane();
+            fabList.AddChild(card);
             var body = card.GetChild<VBoxContainer>(0);
+            body.AddThemeConstantOverride("separation", 6);
 
-            var costLabel = CreateLabel(12, Palette.UiMuted, false, 0.2f, true);
-            costLabel.Text = GameText.Format("fullscreen.workshop.cost", FormatCompactResourceBundle(definition.CraftCost!));
+            var titleLabel = CreateLabel(14, Palette.UiText, true, 0.2f, true);
+            titleLabel.Text = definition.Label;
+            body.AddChild(titleLabel);
+
+            var costLabel = CreateLabel(11, new Color(Palette.UiText, 0.56f), false, 0.2f, true);
+            costLabel.Text = $"库存 {CountStoredQuantity(inventory.StoredItems, definition.Id)} / {FormatCompactResourceBundle(definition.CraftCost!)}";
             body.AddChild(costLabel);
 
-            int stashCount = CountStoredQuantity(inventory.StoredItems, definition.Id);
-            var stockLabel = CreateLabel(12, Palette.UiMuted, false, 0.2f, true);
-            stockLabel.Text = GameText.Format("fullscreen.workshop.in_stash", stashCount);
-            body.AddChild(stockLabel);
-
             bool canCraft = CanCraftWorkshopItem(state, definition);
-            var statusLabel = CreateLabel(12, canCraft ? Palette.Accent : Palette.UiMuted, false, 0.2f, true);
-            statusLabel.Text = canCraft
-                ? GameText.Text("fullscreen.workshop.ready")
-                : ResolveWorkshopCraftBlocker(state, definition);
+            var statusLabel = CreateLabel(11, canCraft ? Palette.Accent : new Color(Palette.UiText, 0.48f), false, 0.2f, true);
+            statusLabel.Text = canCraft ? GameText.Text("fullscreen.workshop.ready") : ResolveWorkshopCraftBlocker(state, definition);
             body.AddChild(statusLabel);
 
             var craftButton = CreateSmallButton(canCraft ? GameText.Text("fullscreen.workshop.fabricate") : GameText.Text("common.unavailable"), canCraft);
             craftButton.Pressed += () => GameManager.Instance?.Store?.CraftWorkshopItem(definition.Id);
             body.AddChild(craftButton);
-
-            fabList.AddChild(card);
         }
     }
 
-    private void BuildCommandPanel(string selectedRouteId)
+    private void BuildMaintenancePanel(GameState state)
     {
+        var inventory = state.Save.Inventory;
+
+        var totalRepairCost = BuildTotalRepairCost(inventory);
+        var layout = new VBoxContainer();
+        layout.AddThemeConstantOverride("separation", 12);
+        layout.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+        layout.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
+        _panelContentContainer.AddChild(layout);
+
+        var summaryRow = new HBoxContainer();
+        summaryRow.AddThemeConstantOverride("separation", 10);
+        layout.AddChild(summaryRow);
+
+        summaryRow.AddChild(CreateBaseMetricPane("维修概览", CanRepairAnyEquipment(state) ? "可维修" : "状态良好", FormatCompactResourceBundle(totalRepairCost)));
+        summaryRow.AddChild(CreateBaseMetricPane("当前护甲", FormatEquippedArmorSummary(inventory)));
+
+        var contentCol = new VBoxContainer();
+        contentCol.AddThemeConstantOverride("separation", 10);
+        contentCol.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+        contentCol.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
+        layout.AddChild(contentCol);
+
         var scroll = new ScrollContainer
         {
             HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled,
@@ -628,40 +751,160 @@ public partial class ViewportOverlay
             SizeFlagsVertical = Control.SizeFlags.ExpandFill,
             SizeFlagsHorizontal = Control.SizeFlags.ExpandFill
         };
-        _panelContentContainer.AddChild(scroll);
+        contentCol.AddChild(scroll);
 
         var list = new VBoxContainer();
-        list.AddThemeConstantOverride("separation", 12);
+        list.AddThemeConstantOverride("separation", 10);
+        list.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+        scroll.AddChild(list);
+
+        foreach (var weaponId in inventory.EquippedWeaponIds)
+        {
+            if (!WeaponData.ById.TryGetValue(weaponId, out var weapon))
+                continue;
+
+            var weaponState = inventory.WeaponStates.FirstOrDefault(stateEntry => stateEntry.WeaponId == weaponId);
+            if (weaponState == null)
+                continue;
+
+            var repairCost = EquipmentRules.GetWeaponRepairCost(weaponState);
+            bool canRepair = HasResourceCost(repairCost) && CanAfford(state.Save.Base.Resources, repairCost);
+            var card = CreateCombatInventoryPane();
+            list.AddChild(card);
+            var body = card.GetChild<VBoxContainer>(0);
+            body.AddThemeConstantOverride("separation", 6);
+
+            var titleLabel = CreateLabel(14, Palette.UiText, true, 0.2f, true);
+            titleLabel.Text = weapon.Label;
+            body.AddChild(titleLabel);
+
+            var durabilityLabel = CreateLabel(11, new Color(Palette.UiText, 0.58f), false, 0.2f, true);
+            durabilityLabel.Text = $"耐久 {Mathf.RoundToInt(weaponState.Durability)}/{Mathf.RoundToInt(weaponState.MaxDurability)} / 改装 {weaponState.UpgradeLevel}/{EquipmentRules.MaxWeaponUpgradeLevel}";
+            body.AddChild(durabilityLabel);
+
+            var costLabel = CreateLabel(11, new Color(Palette.UiText, 0.48f), false, 0.2f, true);
+            costLabel.Text = HasResourceCost(repairCost)
+                ? FormatCompactResourceBundle(repairCost)
+                : "无需维修";
+            body.AddChild(costLabel);
+
+            var repairButton = CreateSmallButton(canRepair ? "维修" : "无需维修", canRepair);
+            repairButton.Pressed += () => GameManager.Instance?.Store?.RepairWeapon(weaponId);
+            body.AddChild(repairButton);
+        }
+
+        foreach (var armorId in inventory.OwnedArmorIds.Where(ArmorData.ById.ContainsKey))
+        {
+            var armor = ArmorData.ById[armorId];
+            var armorState = inventory.ArmorStates.FirstOrDefault(stateEntry => stateEntry.ArmorId == armorId);
+            if (armorState == null)
+                continue;
+
+            var repairCost = EquipmentRules.GetArmorRepairCost(armorState);
+            bool canRepair = HasResourceCost(repairCost) && CanAfford(state.Save.Base.Resources, repairCost);
+            var card = CreateCombatInventoryPane();
+            list.AddChild(card);
+            var body = card.GetChild<VBoxContainer>(0);
+            body.AddThemeConstantOverride("separation", 6);
+
+            var titleLabel = CreateLabel(14, Palette.UiText, true, 0.2f, true);
+            titleLabel.Text = armor.Label;
+            body.AddChild(titleLabel);
+
+            var durabilityLabel = CreateLabel(11, new Color(Palette.UiText, 0.58f), false, 0.2f, true);
+            durabilityLabel.Text = $"{(inventory.EquippedArmorId == armorId ? "已装备" : "待命")} / 耐久 {Mathf.RoundToInt(armorState.Durability)}/{Mathf.RoundToInt(armorState.MaxDurability)} / 改装 {armorState.UpgradeLevel}/{EquipmentRules.MaxArmorUpgradeLevel}";
+            body.AddChild(durabilityLabel);
+
+            var costLabel = CreateLabel(11, new Color(Palette.UiText, 0.48f), false, 0.2f, true);
+            costLabel.Text = HasResourceCost(repairCost)
+                ? FormatCompactResourceBundle(repairCost)
+                : "无需维修";
+            body.AddChild(costLabel);
+
+            var repairButton = CreateSmallButton(canRepair ? "维修" : "无需维修", canRepair);
+            repairButton.Pressed += () => GameManager.Instance?.Store?.RepairArmor(armorId);
+            body.AddChild(repairButton);
+        }
+    }
+
+    private void BuildCommandPanel(string selectedRouteId)
+    {
+        var selectedRoute = RouteData.GetMap(selectedRouteId);
+
+        var split = new HBoxContainer();
+        split.AddThemeConstantOverride("separation", 18);
+        split.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+        split.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
+        _panelContentContainer.AddChild(split);
+
+        var leftCol = new VBoxContainer();
+        leftCol.AddThemeConstantOverride("separation", 10);
+        leftCol.CustomMinimumSize = new Vector2(360f, 0f);
+        split.AddChild(leftCol);
+
+        var selectedPane = CreateCombatInventoryPane(GameText.Text("fullscreen.card.selected_map"));
+        leftCol.AddChild(selectedPane);
+        var selectedBody = selectedPane.GetChild<VBoxContainer>(0);
+        selectedBody.AddThemeConstantOverride("separation", 6);
+
+        var selectedTitle = CreateLabel(18, Palette.UiText, true, 0.2f, true);
+        selectedTitle.Text = selectedRoute.Label;
+        selectedBody.AddChild(selectedTitle);
+
+        int selectedThreat = selectedRoute.Zones.Length > 0 ? selectedRoute.Zones.Max(zone => zone.ThreatLevel) : 0;
+        var selectedStats = CreateLabel(12, new Color(Palette.UiText, 0.62f), false, 0.2f, true);
+        selectedStats.Text = $"威胁 {selectedThreat} / 区域 {selectedRoute.Zones.Length} / 撤离点 {selectedRoute.ExtractionPointCount}";
+        selectedBody.AddChild(selectedStats);
+
+        foreach (var zone in selectedRoute.Zones)
+        {
+            var regionLabel = CreateLabel(11, new Color(Palette.UiText, 0.52f), false, 0.1f, true);
+            regionLabel.Text = BuildRegionIntelLine(zone);
+            selectedBody.AddChild(regionLabel);
+        }
+
+        var scroll = new ScrollContainer
+        {
+            HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled,
+            VerticalScrollMode = ScrollContainer.ScrollMode.Auto,
+            SizeFlagsVertical = Control.SizeFlags.ExpandFill,
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill
+        };
+        split.AddChild(scroll);
+
+        var list = new VBoxContainer();
+        list.AddThemeConstantOverride("separation", 10);
         list.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
         scroll.AddChild(list);
 
         foreach (var route in RouteData.Maps)
         {
-            int extractionCount = route.Zones.Count(zone => zone.AllowsExtraction);
+            int extractionCount = route.ExtractionPointCount;
             int highestThreat = route.Zones.Length > 0 ? route.Zones.Max(zone => zone.ThreatLevel) : 0;
-            var card = CreateContentCard(GameText.Text("fullscreen.card.map"), route.Label, BuildMapSummary(route));
+            bool selected = route.Id == selectedRouteId;
+            var card = CreateCombatInventoryPane();
+            card.AddThemeStyleboxOverride("panel", CreateCombatFrameStyle(
+                new Color(Palette.WorldFloorDeep, 0.84f),
+                new Color(selected ? Palette.Accent : Palette.Frame, selected ? 0.42f : 0.18f),
+                12,
+                12,
+                12,
+                12));
+            list.AddChild(card);
             var body = card.GetChild<VBoxContainer>(0);
+            body.AddThemeConstantOverride("separation", 6);
 
-            var pressureLabel = CreateLabel(12, Palette.UiMuted, false, 0.2f, true);
-            pressureLabel.Text = GameText.Format("fullscreen.command.pressure", route.Zones.Length, highestThreat, extractionCount);
-            body.AddChild(pressureLabel);
+            var routeTitle = CreateLabel(16, Palette.UiText, true, 0.2f, true);
+            routeTitle.Text = route.Label;
+            body.AddChild(routeTitle);
 
-            var supplyLabel = CreateLabel(12, Palette.UiMuted, false, 0.2f, true);
-            supplyLabel.Text = BuildMapSupplyAdvice(route);
-            body.AddChild(supplyLabel);
+            var routeMeta = CreateLabel(11, new Color(Palette.UiText, 0.56f), false, 0.2f, true);
+            routeMeta.Text = $"威胁 {highestThreat} / 区域 {route.Zones.Length} / 撤离点 {extractionCount}";
+            body.AddChild(routeMeta);
 
-            foreach (var zone in route.Zones)
-            {
-                var regionLabel = CreateLabel(12, Palette.UiText, false, 0.1f, true);
-                regionLabel.Text = BuildRegionIntelLine(zone);
-                body.AddChild(regionLabel);
-            }
-
-            var button = CreateSmallButton(route.Id == selectedRouteId ? GameText.Text("common.selected") : GameText.Text("fullscreen.command.select_map"), route.Id != selectedRouteId);
+            var button = CreateSmallButton(selected ? GameText.Text("common.selected") : GameText.Text("fullscreen.command.select_map"), !selected);
             button.Pressed += () => GameManager.Instance?.Store?.SelectWorldMap(route.Id);
             body.AddChild(button);
-
-            list.AddChild(card);
         }
     }
 
@@ -676,41 +919,28 @@ public partial class ViewportOverlay
             CapacityCells = inventory.DeploymentPack.Columns * inventory.DeploymentPack.Rows,
         };
 
-        bool compact = GetViewport().GetVisibleRect().Size.X < 1400f;
-        BoxContainer split = compact ? new VBoxContainer() : new HBoxContainer();
-        split.AddThemeConstantOverride("separation", 20);
-        split.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
-        split.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
-        _panelContentContainer.AddChild(split);
+        var layout = new VBoxContainer();
+        layout.AddThemeConstantOverride("separation", 12);
+        layout.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+        layout.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
+        _panelContentContainer.AddChild(layout);
 
-        var leftColumn = new VBoxContainer();
-        leftColumn.AddThemeConstantOverride("separation", 12);
-        leftColumn.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
-        if (!compact)
-            leftColumn.CustomMinimumSize = new Vector2(380f, 0f);
-        split.AddChild(leftColumn);
+        var summaryRow = new HBoxContainer();
+        summaryRow.AddThemeConstantOverride("separation", 10);
+        layout.AddChild(summaryRow);
 
-        var rightColumn = new VBoxContainer();
-        rightColumn.AddThemeConstantOverride("separation", 12);
-        rightColumn.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
-        rightColumn.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
-        split.AddChild(rightColumn);
+        summaryRow.AddChild(CreateBaseMetricPane(GameText.Text("fullscreen.card.selected_map"), selectedRoute.Label, BuildMapSummary(selectedRoute)));
+        summaryRow.AddChild(CreateBaseMetricPane("部署状态", readiness.StatusLabel, readiness.Detail));
+        summaryRow.AddChild(CreateBaseMetricPane(
+            "载荷",
+            $"{readiness.StagedUnits} 件 / {readiness.OccupiedCells}/{Mathf.Max(1, readiness.CapacityCells)}",
+            $"治疗 {readiness.HealingUnits} / 机动 {readiness.MobilityUnits} / 功能 {readiness.UtilityUnits}"));
 
-        AddCardTo(leftColumn, GameText.Text("fullscreen.card.selected_map"), selectedRoute.Label, BuildMapSummary(selectedRoute));
-        AddCardTo(leftColumn, GameText.Text("fullscreen.launch.regional_pressure"), GameText.Format("fullscreen.launch.pressure_value", readiness.HighestThreat, selectedRoute.Zones.Length), readiness.HighestThreat >= 3
-            ? GameText.Text("fullscreen.launch.high_risk_hint")
-            : GameText.Text("fullscreen.launch.low_risk_hint"));
-        AddCardTo(leftColumn, GameText.Text("fullscreen.launch.deployment_status"), readiness.StatusLabel, readiness.Detail);
-        AddCardTo(leftColumn, GameText.Text("fullscreen.launch.pack_summary"),
-            GameText.Format("fullscreen.launch.pack_summary_value", readiness.StagedUnits, readiness.OccupiedCells, Mathf.Max(1, readiness.CapacityCells)),
-            GameText.Format("fullscreen.launch.pack_summary_meta", readiness.HealingUnits, readiness.MobilityUnits, readiness.UtilityUnits));
-
-        BuildLaunchInventoryContent(rightColumn, inventory, readiness.CanDeploy);
+        BuildLaunchInventoryContent(layout, inventory, readiness.CanDeploy);
     }
 
     private void BuildCombatInventoryPanel(RunState activeRun, WorldRouteDefinition currentRoute, RunZoneState? currentZone)
     {
-        AddContentCard(GameText.Text("fullscreen.card.region"), $"{currentRoute.Label} / {currentZone?.Label ?? activeRun.Map.CurrentZoneId}", currentZone?.Description ?? GameText.Text("fullscreen.card.ao_meta"));
         BuildCombatInventoryContent(activeRun);
     }
 
@@ -729,17 +959,21 @@ public partial class ViewportOverlay
                 _panelPrimaryButton.Disabled = false;
                 break;
             case ScenePanelMode.Workshop:
-                _panelPrimaryButton.Text = GameText.Text("fullscreen.action.rotate_loadout");
-                _panelPrimaryButton.Disabled = state.Save.Inventory.EquippedWeaponIds.Count < 2;
+                _panelPrimaryButton.Text = "升级当前配装";
+                _panelPrimaryButton.Disabled = !CanUpgradeAnyEquippedItem(state);
+                break;
+            case ScenePanelMode.Maintenance:
+                _panelPrimaryButton.Text = "全部维修";
+                _panelPrimaryButton.Disabled = !CanRepairAnyEquipment(state);
                 break;
             case ScenePanelMode.Command:
-                _panelPrimaryButton.Text = GameText.Text("fullscreen.action.cycle_map");
-                _panelPrimaryButton.Disabled = false;
+                _panelPrimaryButton.Visible = false;
                 break;
             case ScenePanelMode.Launch:
                 _panelPrimaryButton.Visible = false;
                 break;
             case ScenePanelMode.CombatInventory:
+                _panelFooter.Visible = false;
                 _panelPrimaryButton.Text = GameText.Text("fullscreen.action.sort_pack");
                 _panelPrimaryButton.Disabled = activeRun == null || activeRun.Inventory.Items.Count < 2;
                 break;
@@ -767,8 +1001,37 @@ public partial class ViewportOverlay
                 store.AutoArrangeBaseStash();
                 break;
             case ScenePanelMode.Workshop:
-                if (state.Save.Inventory.EquippedWeaponIds.Count > 1)
-                    store.MoveEquippedWeapon(0, state.Save.Inventory.EquippedWeaponIds.Count - 1);
+                bool issuedUpgrade = false;
+                foreach (var weaponId in state.Save.Inventory.EquippedWeaponIds)
+                {
+                    if (!WeaponData.ById.TryGetValue(weaponId, out var weapon))
+                        continue;
+
+                    var weaponState = state.Save.Inventory.WeaponStates.FirstOrDefault(entry => entry.WeaponId == weaponId);
+                    if (weaponState == null || weaponState.UpgradeLevel >= EquipmentRules.MaxWeaponUpgradeLevel)
+                        continue;
+
+                    if (!CanAfford(state.Save.Base.Resources, EquipmentRules.GetWeaponUpgradeCost(weapon, weaponState.UpgradeLevel + 1)))
+                        continue;
+
+                    store.UpgradeWeapon(weaponId);
+                    issuedUpgrade = true;
+                    break;
+                }
+
+                if (!issuedUpgrade
+                    && !string.IsNullOrWhiteSpace(state.Save.Inventory.EquippedArmorId)
+                    && ArmorData.ById.TryGetValue(state.Save.Inventory.EquippedArmorId, out var equippedArmor))
+                {
+                    var armorState = state.Save.Inventory.ArmorStates.FirstOrDefault(entry => entry.ArmorId == equippedArmor.Id);
+                    if (armorState != null
+                        && armorState.UpgradeLevel < EquipmentRules.MaxArmorUpgradeLevel
+                        && CanAfford(state.Save.Base.Resources, EquipmentRules.GetArmorUpgradeCost(equippedArmor, armorState.UpgradeLevel + 1)))
+                        store.UpgradeArmor(equippedArmor.Id);
+                }
+                break;
+            case ScenePanelMode.Maintenance:
+                store.RepairAllEquipment();
                 break;
             case ScenePanelMode.Command:
                 store.SelectNextWorldMap();
@@ -808,6 +1071,26 @@ public partial class ViewportOverlay
     private void AddContentCard(string title, string value, string meta)
     {
         _panelContentContainer.AddChild(CreateContentCard(title, value, meta));
+    }
+
+    private PanelContainer CreateBaseMetricPane(string label, string value, string meta = "")
+    {
+        var pane = CreateCombatInventoryPane(label);
+        pane.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+
+        var body = pane.GetChild<VBoxContainer>(0);
+        var valueLabel = CreateLabel(18, Palette.UiText, true, 0.2f, true);
+        valueLabel.Text = value;
+        body.AddChild(valueLabel);
+
+        if (!string.IsNullOrWhiteSpace(meta))
+        {
+            var metaLabel = CreateLabel(11, new Color(Palette.UiText, 0.56f), false, 0.2f, true);
+            metaLabel.Text = meta;
+            body.AddChild(metaLabel);
+        }
+
+        return pane;
     }
 
     private PanelContainer CreateContentCard(string title, string value, string meta)
@@ -897,6 +1180,7 @@ public partial class ViewportOverlay
             yield return (ScenePanelMode.Overview, GameText.Text("fullscreen.tab.overview"));
             yield return (ScenePanelMode.Locker, GameText.Text("fullscreen.tab.locker"));
             yield return (ScenePanelMode.Workshop, GameText.Text("fullscreen.tab.workshop"));
+            yield return (ScenePanelMode.Maintenance, "维修");
             yield return (ScenePanelMode.Command, GameText.Text("fullscreen.tab.command"));
             yield return (ScenePanelMode.Launch, GameText.Text("fullscreen.tab.launch"));
             yield break;
@@ -913,7 +1197,11 @@ public partial class ViewportOverlay
             : string.Join(",", activeRun.Inventory.Items.Select(item => $"{item.ItemId}:{item.Quantity}:{item.X}:{item.Y}:{item.Rotated}"));
         string loadoutKey = string.Join(",", activeRun?.Player.LoadoutWeaponIds ?? state.Save.Inventory.EquippedWeaponIds);
         string lootKey = activeRun == null ? string.Empty : string.Join(",", activeRun.GroundLoot.Select(drop => $"{drop.Item.ItemId}:{drop.X:0}:{drop.Y:0}"));
-        return $"{state.Mode}:{mode}:{state.Save.World.SelectedRouteId}:{inventoryKey}:{loadoutKey}:{lootKey}:{state.Runtime.NearbyLootCount}:{activeRun?.Stats.Kills ?? 0}";
+        string equipmentKey = activeRun == null
+            ? $"{string.Join(",", state.Save.Inventory.WeaponStates.Select(item => $"{item.WeaponId}:{item.Durability:0.0}:{item.UpgradeLevel}"))}|{string.Join(",", state.Save.Inventory.ArmorStates.Select(item => $"{item.ArmorId}:{item.Durability:0.0}:{item.UpgradeLevel}"))}|{state.Save.Inventory.EquippedArmorId}"
+            : $"{string.Join(",", activeRun.Player.WeaponStates.Select(item => $"{item.WeaponId}:{item.Durability:0.0}:{item.UpgradeLevel}"))}|{activeRun.Player.Armor.ArmorId}:{activeRun.Player.Armor.Durability:0.0}:{activeRun.Player.Armor.UpgradeLevel}";
+        string resourceKey = $"{state.Save.Base.Resources.Salvage}:{state.Save.Base.Resources.Alloy}:{state.Save.Base.Resources.Research}";
+        return $"{state.Mode}:{mode}:{state.Save.World.SelectedRouteId}:{inventoryKey}:{loadoutKey}:{lootKey}:{equipmentKey}:{resourceKey}:{state.Runtime.NearbyLootCount}:{activeRun?.Stats.Kills ?? 0}";
     }
 
     private static string FormatLoadout(IReadOnlyList<WeaponType> loadout)
@@ -973,10 +1261,78 @@ public partial class ViewportOverlay
         return parts.Count > 0 ? string.Join(" / ", parts) : GameText.Text("common.no_cost");
     }
 
+    private static string FormatEquippedArmorSummary(InventoryState inventory)
+    {
+        if (string.IsNullOrWhiteSpace(inventory.EquippedArmorId) || !ArmorData.ById.TryGetValue(inventory.EquippedArmorId, out var armor))
+            return "未装备护甲";
+
+        var armorState = inventory.ArmorStates.FirstOrDefault(state => state.ArmorId == armor.Id);
+        if (armorState == null)
+            return armor.Label;
+
+        int mitigation = Mathf.RoundToInt((armor.Mitigation + armorState.UpgradeLevel * 0.035f) * 100f);
+        return $"{armor.Label} / 耐久 {Mathf.RoundToInt(armorState.Durability)}/{Mathf.RoundToInt(armorState.MaxDurability)} / 减伤 {mitigation}%";
+    }
+
+    private static ResourceBundle BuildTotalRepairCost(InventoryState inventory)
+    {
+        var total = ResourceBundle.Zero();
+        foreach (var weaponState in inventory.WeaponStates)
+            total.Add(EquipmentRules.GetWeaponRepairCost(weaponState));
+        foreach (var armorState in inventory.ArmorStates)
+            total.Add(EquipmentRules.GetArmorRepairCost(armorState));
+        return total;
+    }
+
+    private static bool CanRepairAnyEquipment(GameState state)
+    {
+        var cost = BuildTotalRepairCost(state.Save.Inventory);
+        return HasResourceCost(cost) && CanAfford(state.Save.Base.Resources, cost);
+    }
+
+    private static bool CanUpgradeAnyEquippedItem(GameState state)
+    {
+        foreach (var weaponId in state.Save.Inventory.EquippedWeaponIds)
+        {
+            if (!WeaponData.ById.TryGetValue(weaponId, out var weapon))
+                continue;
+
+            var weaponState = state.Save.Inventory.WeaponStates.FirstOrDefault(entry => entry.WeaponId == weaponId);
+            if (weaponState == null || weaponState.UpgradeLevel >= EquipmentRules.MaxWeaponUpgradeLevel)
+                continue;
+
+            if (CanAfford(state.Save.Base.Resources, EquipmentRules.GetWeaponUpgradeCost(weapon, weaponState.UpgradeLevel + 1)))
+                return true;
+        }
+
+        if (!string.IsNullOrWhiteSpace(state.Save.Inventory.EquippedArmorId)
+            && ArmorData.ById.TryGetValue(state.Save.Inventory.EquippedArmorId, out var armor))
+        {
+            var armorState = state.Save.Inventory.ArmorStates.FirstOrDefault(entry => entry.ArmorId == armor.Id);
+            if (armorState != null
+                && armorState.UpgradeLevel < EquipmentRules.MaxArmorUpgradeLevel
+                && CanAfford(state.Save.Base.Resources, EquipmentRules.GetArmorUpgradeCost(armor, armorState.UpgradeLevel + 1)))
+                return true;
+        }
+
+        return false;
+    }
+
+    private static bool HasResourceCost(ResourceBundle bundle)
+    {
+        return bundle.Salvage > 0 || bundle.Alloy > 0 || bundle.Research > 0;
+    }
+
+    private static bool CanAfford(BaseResources resources, ResourceBundle cost)
+    {
+        return resources.Salvage >= cost.Salvage
+            && resources.Alloy >= cost.Alloy
+            && resources.Research >= cost.Research;
+    }
+
     private static string BuildRegionIntelLine(WorldRouteZoneDefinition zone)
     {
-        string extraction = zone.AllowsExtraction ? GameText.Text("fullscreen.extraction.allowed") : GameText.Text("fullscreen.extraction.blocked");
-        return GameText.Format("fullscreen.region_intel", zone.ThreatLevel, DescribeZoneKind(zone.Kind), zone.Label, DescribeRegionPressure(zone), DescribeRegionLootBias(zone), extraction);
+        return GameText.Format("fullscreen.region_intel", zone.ThreatLevel, DescribeZoneKind(zone.Kind), zone.Label, DescribeRegionPressure(zone), DescribeRegionLootBias(zone), zone.Description);
     }
 
     private static string BuildMapSupplyAdvice(WorldRouteDefinition route)
@@ -993,7 +1349,7 @@ public partial class ViewportOverlay
     private static string BuildMapSummary(WorldRouteDefinition route)
     {
         int highestThreat = route.Zones.Length > 0 ? route.Zones.Max(zone => zone.ThreatLevel) : 0;
-        int extractionCount = route.Zones.Count(zone => zone.AllowsExtraction);
+        int extractionCount = route.ExtractionPointCount;
         return GameText.Format("fullscreen.map_summary", route.Zones.Length, highestThreat, extractionCount);
     }
 

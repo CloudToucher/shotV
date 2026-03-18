@@ -16,6 +16,7 @@ public partial class HUD : Control
     private Label _healthLabel = null!;
     private ProgressBar _healthBar = null!;
     private Label _dashLabel = null!;
+    private Label _armorLabel = null!;
 
     private PanelContainer _infoPanel = null!;
     private Label _waveLabel = null!;
@@ -41,8 +42,8 @@ public partial class HUD : Control
     private readonly List<Label> _quickSlotLabels = new();
 
     private float _hintTimer;
-    private List<WeaponDefinition> _loadout = WeaponData.Loadout.ToList();
-    private WeaponType _activeWeaponId = WeaponType.MachineGun;
+    private List<WeaponDefinition> _loadout = WeaponData.DefaultLoadout.ToList();
+    private WeaponType _activeWeaponId = WeaponData.GetDefaultWeapon().Id;
     private readonly Dictionary<WeaponType, WeaponHudState> _weaponRuntime = new();
     private WeaponType? _reloadWeaponId;
     private float _reloadProgress;
@@ -75,7 +76,7 @@ public partial class HUD : Control
 
     public void UpdateLoadout(IReadOnlyList<WeaponDefinition> loadout, WeaponType activeWeaponId)
     {
-        _loadout = loadout.Count > 0 ? loadout.ToList() : WeaponData.Loadout.ToList();
+        _loadout = loadout.Count > 0 ? loadout.ToList() : WeaponData.DefaultLoadout.ToList();
         _activeWeaponId = activeWeaponId;
         RefreshWeaponStrip();
     }
@@ -99,7 +100,12 @@ public partial class HUD : Control
             int reserve = string.IsNullOrWhiteSpace(ammo.ReserveItemId)
                 ? 0
                 : GridInventory.CountItemQuantity(inventory.Items, ammo.ReserveItemId);
-            _weaponRuntime[state.WeaponId] = new WeaponHudState(state.Magazine, state.MagazineCapacity, reserve, ammo.Label);
+            _weaponRuntime[state.WeaponId] = new WeaponHudState(
+                state.Magazine,
+                state.MagazineCapacity,
+                reserve,
+                ammo.Label,
+                EquipmentRules.GetDurabilityRatio(state.Durability, state.MaxDurability));
         }
 
         _reloadWeaponId = reloadWeaponId;
@@ -151,6 +157,20 @@ public partial class HUD : Control
         _dashLabel.Text = ratio > 0.01f
             ? GameText.Format("hud.dash", ratio)
             : GameText.Text("hud.dash_ready");
+    }
+
+    public void UpdateArmor(PlayerRunState.PlayerArmorState? armor)
+    {
+        if (armor == null || string.IsNullOrWhiteSpace(armor.ArmorId) || !ArmorData.ById.TryGetValue(armor.ArmorId, out var definition))
+        {
+            _armorLabel.Text = "护甲 未装备";
+            return;
+        }
+
+        int durability = Mathf.RoundToInt(armor.Durability);
+        int maxDurability = Mathf.Max(1, Mathf.RoundToInt(armor.MaxDurability));
+        int mitigation = Mathf.RoundToInt(EquipmentRules.GetArmorMitigation(armor) * 100f);
+        _armorLabel.Text = $"{definition.Label} {durability}/{maxDurability}  减伤 {mitigation}%";
     }
 
     public void ShowHint(string text, float duration = 3f)
@@ -220,11 +240,11 @@ public partial class HUD : Control
         _bossBar = CreateProgressBar(new Color(Palette.Danger, 0.96f));
         bossBody.AddChild(_bossBar);
 
-        _healthPanel = CreatePanel(new Rect2(0, 0, 304, 88));
+        _healthPanel = CreatePanel(new Rect2(0, 0, 304, 112));
         _healthPanel.AnchorTop = 1f;
         _healthPanel.AnchorBottom = 1f;
         _healthPanel.OffsetLeft = 24f;
-        _healthPanel.OffsetTop = -188f;
+        _healthPanel.OffsetTop = -212f;
         _healthPanel.OffsetRight = 328f;
         _healthPanel.OffsetBottom = -100f;
         AddChild(_healthPanel);
@@ -242,12 +262,15 @@ public partial class HUD : Control
         _dashLabel = CreateLabel(12, Palette.UiMuted, false);
         healthBody.AddChild(_dashLabel);
 
-        _weaponPanel = CreatePanel(new Rect2(0, 0, 464, 72));
+        _armorLabel = CreateLabel(12, Palette.UiMuted, false);
+        healthBody.AddChild(_armorLabel);
+
+        _weaponPanel = CreatePanel(new Rect2(0, 0, 560, 72));
         _weaponPanel.AnchorTop = 1f;
         _weaponPanel.AnchorBottom = 1f;
         _weaponPanel.OffsetLeft = 24f;
         _weaponPanel.OffsetTop = -88f;
-        _weaponPanel.OffsetRight = 488f;
+        _weaponPanel.OffsetRight = 584f;
         _weaponPanel.OffsetBottom = -16f;
         AddChild(_weaponPanel);
 
@@ -255,11 +278,11 @@ public partial class HUD : Control
         weaponRow.AddThemeConstantOverride("separation", 12);
         _weaponPanel.AddChild(weaponRow);
 
-        for (int index = 0; index < WeaponData.Loadout.Length; index++)
+        for (int index = 0; index < WeaponData.MaxLoadoutSize; index++)
         {
             var card = new PanelContainer
             {
-                CustomMinimumSize = new Vector2(136f, 46f),
+                CustomMinimumSize = new Vector2(168f, 46f),
                 MouseFilter = MouseFilterEnum.Ignore,
             };
             weaponRow.AddChild(card);
@@ -347,6 +370,7 @@ public partial class HUD : Control
         UpdateWave(0, 0);
         UpdateEnemyStatus(0, 0);
         UpdateDashCooldown(0f);
+        UpdateArmor(null);
         RefreshWeaponStrip();
     }
 
@@ -379,7 +403,7 @@ public partial class HUD : Control
             if (weapon == null || !_weaponRuntime.TryGetValue(weapon.Id, out var runtime))
                 continue;
 
-            string labelText = $"{index + 1}  {weapon.Label} {runtime.Magazine}/{runtime.MagazineCapacity}+{runtime.Reserve} [{runtime.AmmoLabel}]";
+            string labelText = $"{index + 1}  {weapon.Label} {runtime.Magazine}/{runtime.MagazineCapacity}+{runtime.Reserve} [{runtime.AmmoLabel}] D{Mathf.RoundToInt(runtime.DurabilityRatio * 100f)}%";
             if (_reloadWeaponId == weapon.Id)
                 labelText += $" {GameText.Format("hud.reload", Mathf.RoundToInt(_reloadProgress * 100f))}";
 
@@ -465,17 +489,19 @@ public partial class HUD : Control
 
     private readonly struct WeaponHudState
     {
-        public WeaponHudState(int magazine, int magazineCapacity, int reserve, string ammoLabel)
+        public WeaponHudState(int magazine, int magazineCapacity, int reserve, string ammoLabel, float durabilityRatio)
         {
             Magazine = magazine;
             MagazineCapacity = magazineCapacity;
             Reserve = reserve;
             AmmoLabel = ammoLabel;
+            DurabilityRatio = durabilityRatio;
         }
 
         public int Magazine { get; }
         public int MagazineCapacity { get; }
         public int Reserve { get; }
         public string AmmoLabel { get; }
+        public float DurabilityRatio { get; }
     }
 }

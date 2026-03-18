@@ -68,10 +68,10 @@ public partial class InventoryGridControl : Control
     public override void _Draw()
     {
         var rect = new Rect2(Vector2.Zero, new Vector2(Columns * CellSize, Rows * CellSize));
-        DrawRect(rect, new Color(1f, 1f, 1f, 0.82f));
-        DrawRect(rect, new Color(Palette.Frame, 0.3f), false, 1.5f);
+        DrawRect(rect, new Color(Palette.BgOuter, 0.78f));
+        DrawRect(rect, new Color(Palette.Frame, 0.2f), false, 1f);
 
-        const float cut = 8f;
+        const float cut = 7f;
         DrawBracket(rect.Position, rect.Position + new Vector2(cut, 0f), rect.Position + new Vector2(0f, cut));
         var topRight = new Vector2(rect.End.X, rect.Position.Y);
         DrawBracket(topRight, topRight + new Vector2(-cut, 0f), topRight + new Vector2(0f, cut));
@@ -87,9 +87,9 @@ public partial class InventoryGridControl : Control
                 float x = column * CellSize;
                 float y = row * CellSize;
                 var cellRect = new Rect2(x + 1f, y + 1f, CellSize - 2f, CellSize - 2f);
-                DrawRect(cellRect, new Color(Palette.UiActive, 0.15f));
-                DrawRect(cellRect, new Color(Palette.FrameSoft, 0.1f), false, 1f);
-                DrawRect(new Rect2(x + CellSize * 0.5f - 1f, y + CellSize * 0.5f - 1f, 2f, 2f), new Color(Palette.FrameSoft, 0.2f));
+                DrawRect(cellRect, new Color(Palette.WorldFloorDeep, 0.32f));
+                DrawRect(cellRect, new Color(Palette.FrameSoft, 0.12f), false, 1f);
+                DrawRect(new Rect2(x + CellSize * 0.5f - 1f, y + CellSize * 0.5f - 1f, 2f, 2f), new Color(Palette.Frame, 0.18f));
             }
         }
 
@@ -103,37 +103,37 @@ public partial class InventoryGridControl : Control
             return;
 
         var rect = new Rect2(x + 2f, y + 2f, item.Width * CellSize - 4f, item.Height * CellSize - 4f);
-        DrawRect(rect, new Color(definition.Tint, alpha * 0.92f));
-        DrawRect(rect, new Color(definition.AccentColor, strokeAlpha), false, 1.5f);
-        DrawRect(new Rect2(rect.Position.X + 6f, rect.Position.Y + 6f, Mathf.Max(16f, rect.Size.X - 12f), 2f), new Color(definition.AccentColor, 0.86f));
-        DrawRect(new Rect2(rect.Position + new Vector2(2f, 2f), new Vector2(rect.Size.X - 4f, Mathf.Max(10f, rect.Size.Y * 0.38f))), new Color(1f, 1f, 1f, accentAlpha));
+        DrawRect(rect, new Color(definition.Tint, alpha * 0.78f));
+        DrawRect(rect, new Color(definition.AccentColor, strokeAlpha * 0.82f), false, 1.25f);
+        DrawRect(new Rect2(rect.Position.X + 5f, rect.Position.Y + 5f, Mathf.Max(14f, rect.Size.X - 10f), 3f), new Color(definition.AccentColor, 0.74f));
+        DrawRect(new Rect2(rect.Position + new Vector2(2f, 2f), new Vector2(rect.Size.X - 4f, Mathf.Max(8f, rect.Size.Y * 0.24f))), new Color(1f, 1f, 1f, accentAlpha * 0.5f));
 
         var font = ThemeDB.FallbackFont;
-        int fontSize = UiScale.Font(rect.Size.Y >= 56f ? 12 : 11);
+        int fontSize = UiScale.Font(rect.Size.Y >= 56f ? 11 : 10);
         string label = definition.ShortLabel;
         var labelPos = rect.Position + new Vector2(8f, 18f);
-        DrawString(font, labelPos, label, HorizontalAlignment.Left, Mathf.Max(10f, rect.Size.X - 16f), fontSize, Palette.UiText);
+        DrawString(font, labelPos, label, HorizontalAlignment.Left, Mathf.Max(10f, rect.Size.X - 16f), fontSize, new Color(Palette.UiText, 0.84f));
 
         if (item.Quantity > 1)
         {
             string quantity = $"x{item.Quantity}";
             int quantityFont = UiScale.Font(10);
             var size = font.GetStringSize(quantity, HorizontalAlignment.Left, -1, quantityFont);
-            DrawString(font, rect.Position + new Vector2(rect.Size.X - size.X - 6f, rect.Size.Y - 8f), quantity, HorizontalAlignment.Left, -1, quantityFont, Palette.UiText);
+            DrawString(font, rect.Position + new Vector2(rect.Size.X - size.X - 6f, rect.Size.Y - 8f), quantity, HorizontalAlignment.Left, -1, quantityFont, new Color(Palette.UiText, 0.76f));
         }
 
         if (_badges.TryGetValue(item.Id, out var badge))
         {
             var badgeRect = new Rect2(rect.Position + new Vector2(6f, rect.Size.Y - 22f), new Vector2(18f, 14f));
             DrawRect(badgeRect, new Color(definition.AccentColor, 0.92f));
-            DrawRect(badgeRect, new Color(Palette.UiText, 0.14f), false, 1f);
+            DrawRect(badgeRect, new Color(Palette.BgOuter, 0.26f), false, 1f);
             DrawString(font, badgeRect.Position + new Vector2(5f, 11f), badge, HorizontalAlignment.Left, -1, UiScale.Font(10), Palette.BgInner);
         }
     }
 
     private void DrawBracket(Vector2 corner, Vector2 horizontal, Vector2 vertical)
     {
-        DrawLine(corner, horizontal, new Color(Palette.Frame, 0.8f), 2f);
-        DrawLine(corner, vertical, new Color(Palette.Frame, 0.8f), 2f);
+        DrawLine(corner, horizontal, new Color(Palette.Frame, 0.32f), 1.4f);
+        DrawLine(corner, vertical, new Color(Palette.Frame, 0.32f), 1.4f);
     }
 }

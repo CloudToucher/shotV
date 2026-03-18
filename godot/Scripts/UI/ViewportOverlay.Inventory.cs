@@ -17,6 +17,7 @@ public partial class ViewportOverlay
         BaseStash,
         DeploymentPack,
         CombatInventory,
+        CombatWeaponSlot,
         GroundLoot,
     }
 
@@ -33,19 +34,29 @@ public partial class ViewportOverlay
         new Vector2(-6f, 18f),
         new Vector2(20f, 14f),
     };
+    private static readonly string[] CombatQuickSlotKeys = { "4", "5", "6", "7" };
+
+    private const int CombatGroundColumns = 6;
+    private const int CombatGroundRows = 4;
 
     private InventoryGridControl? _baseStashGrid;
     private InventoryGridControl? _basePackGrid;
     private InventoryGridControl? _combatGroundGrid;
     private InventoryGridControl? _combatInventoryGrid;
     private InventoryDragPreviewControl? _dragPreview;
+    private readonly List<PanelContainer> _combatWeaponSlotCards = new();
+    private readonly List<Label> _combatWeaponSlotLabels = new();
     private readonly List<Button> _quickSlotButtons = new();
+    private PanelContainer? _combatArmorSlotCard;
+    private Label? _combatArmorSlotLabel;
+    private Label? _combatArmorSlotMetaLabel;
     private Label? _inventoryInstructionLabel;
 
     private List<InventoryItemRecord> _panelStashItems = new();
     private List<InventoryItemRecord> _panelDeploymentPackItems = new();
     private List<InventoryItemRecord> _panelRunItems = new();
     private List<GroundLootDrop> _panelGroundLoot = new();
+    private List<WeaponType> _panelRunLoadoutWeaponIds = new();
     private string?[] _panelQuickSlots = new string?[GridInventoryState.RunQuickSlotCount];
     private NearbyGroundLootPanelState _nearbyGroundLoot = new();
 
@@ -55,6 +66,12 @@ public partial class ViewportOverlay
     private InventoryItemRecord? _heldInventoryItem;
     private InventoryItemRecord? _heldRestoreItem;
     private GroundLootDrop? _heldRestoreGroundDrop;
+    private int _heldWeaponSlotIndex = -1;
+    private WeaponType? _panelRunCurrentWeaponId;
+    private string _panelRunArmorId = "";
+    private float _panelRunArmorDurability;
+    private float _panelRunArmorMaxDurability;
+    private int _panelRunArmorUpgradeLevel;
     private HeldInventoryOrigin _heldInventoryOrigin;
 
     public override void _Input(InputEvent @event)
@@ -130,7 +147,12 @@ public partial class ViewportOverlay
         _basePackGrid = null;
         _combatGroundGrid = null;
         _combatInventoryGrid = null;
+        _combatArmorSlotCard = null;
+        _combatArmorSlotLabel = null;
+        _combatArmorSlotMetaLabel = null;
         _inventoryInstructionLabel = null;
+        _combatWeaponSlotCards.Clear();
+        _combatWeaponSlotLabels.Clear();
         _quickSlotButtons.Clear();
     }
 
@@ -139,6 +161,7 @@ public partial class ViewportOverlay
         _heldInventoryItem = null;
         _heldRestoreItem = null;
         _heldRestoreGroundDrop = null;
+        _heldWeaponSlotIndex = -1;
         _heldInventoryOrigin = HeldInventoryOrigin.None;
         _baseSyncKey = string.Empty;
         _combatSyncKey = string.Empty;
@@ -149,30 +172,18 @@ public partial class ViewportOverlay
     {
         EnsureBaseStateSynced(inventory);
 
-        var host = CreateInteractiveSection(GameText.Text("inventory.base_storage"), GameText.Text("inventory.base_storage_meta"));
-        host.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
-        var body = host.GetChild<VBoxContainer>(0);
-
-        _inventoryInstructionLabel = CreateLabel(12, Palette.UiMuted, false, 0.2f, true);
-        body.AddChild(_inventoryInstructionLabel);
-
         var gridRow = new HBoxContainer();
-        gridRow.AddThemeConstantOverride("separation", 14);
+        gridRow.AddThemeConstantOverride("separation", 18);
+        gridRow.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
         gridRow.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
-        body.AddChild(gridRow);
+        parent.AddChild(gridRow);
 
-        var containerColumn = new VBoxContainer();
-        containerColumn.AddThemeConstantOverride("separation", 8);
-        containerColumn.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
-        gridRow.AddChild(containerColumn);
-
-        var tabsRow = new HBoxContainer();
-        tabsRow.AddThemeConstantOverride("separation", 4);
-        containerColumn.AddChild(tabsRow);
-
-        var stashTab = CreateSmallButton(GameText.Text("inventory.base_stash"), true);
-        stashTab.AddThemeStyleboxOverride("normal", CreateButtonStyle(true, 1f));
-        tabsRow.AddChild(stashTab);
+        var stashPane = CreateCombatInventoryPane(GameText.Text("inventory.base_stash"));
+        stashPane.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+        stashPane.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
+        gridRow.AddChild(stashPane);
+        var stashBody = stashPane.GetChild<VBoxContainer>(0);
+        stashBody.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
 
         var stashScroll = new ScrollContainer
         {
@@ -182,7 +193,7 @@ public partial class ViewportOverlay
             SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
             CustomMinimumSize = new Vector2(0f, 240f)
         };
-        containerColumn.AddChild(stashScroll);
+        stashBody.AddChild(stashScroll);
 
         var stashCenter = new CenterContainer();
         stashCenter.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
@@ -193,14 +204,12 @@ public partial class ViewportOverlay
         _baseStashGrid.Configure(inventory.StashColumns, inventory.StashRows, GetInventoryCellSize());
         stashCenter.AddChild(_baseStashGrid);
 
-        var packColumn = new VBoxContainer();
-        packColumn.AddThemeConstantOverride("separation", 8);
-        packColumn.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
-        gridRow.AddChild(packColumn);
-
-        var packLabel = CreateLabel(13, Palette.UiText, true, 0.3f, true);
-        packLabel.Text = GameText.Text("inventory.deployment_pack");
-        packColumn.AddChild(packLabel);
+        var packPane = CreateCombatInventoryPane(GameText.Text("inventory.deployment_pack"));
+        packPane.CustomMinimumSize = new Vector2(Mathf.Max(280f, inventory.DeploymentPack.Columns * GetInventoryCellSize() + 28f), 0f);
+        packPane.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
+        gridRow.AddChild(packPane);
+        var packBody = packPane.GetChild<VBoxContainer>(0);
+        packBody.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
 
         var packScroll = new ScrollContainer
         {
@@ -210,7 +219,7 @@ public partial class ViewportOverlay
             SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
             CustomMinimumSize = new Vector2(0f, 240f)
         };
-        packColumn.AddChild(packScroll);
+        packBody.AddChild(packScroll);
 
         var packCenter = new CenterContainer();
         packCenter.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
@@ -221,11 +230,9 @@ public partial class ViewportOverlay
         _basePackGrid.Configure(inventory.DeploymentPack.Columns, inventory.DeploymentPack.Rows, GetInventoryCellSize());
         packCenter.AddChild(_basePackGrid);
 
-        var noteLabel = CreateLabel(12, Palette.UiMuted, false, 0.2f, true);
-        noteLabel.Text = GameText.Text("inventory.base_resources_auto");
-        body.AddChild(noteLabel);
-
-        parent.AddChild(host);
+        _inventoryInstructionLabel = CreateLabel(12, Palette.UiMuted, false, 0.2f, true);
+        _inventoryInstructionLabel.Visible = false;
+        parent.AddChild(_inventoryInstructionLabel);
     }
 
     private void BuildCombatInventoryContent(RunState activeRun)
@@ -233,87 +240,106 @@ public partial class ViewportOverlay
         EnsureCombatStateSynced(activeRun);
 
         var split = new HBoxContainer();
-        split.AddThemeConstantOverride("separation", 24);
+        split.AddThemeConstantOverride("separation", 18);
         split.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
         split.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
         _panelContentContainer.AddChild(split);
 
         var leftCol = new VBoxContainer();
-        leftCol.AddThemeConstantOverride("separation", 12);
-        leftCol.CustomMinimumSize = new Vector2(300f, 0f);
+        leftCol.AddThemeConstantOverride("separation", 10);
+        leftCol.CustomMinimumSize = new Vector2(228f, 0f);
         split.AddChild(leftCol);
 
+        var centerCol = new VBoxContainer();
+        centerCol.AddThemeConstantOverride("separation", 8);
+        centerCol.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+        centerCol.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
+        split.AddChild(centerCol);
+
         var rightCol = new VBoxContainer();
-        rightCol.AddThemeConstantOverride("separation", 12);
-        rightCol.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+        rightCol.AddThemeConstantOverride("separation", 8);
+        rightCol.CustomMinimumSize = new Vector2(CombatGroundColumns * GetInventoryCellSize() + 28f, 0f);
         split.AddChild(rightCol);
 
-        var quickSlotsCard = CreateContentCard(
-            GameText.Text("inventory.quick_slots_title"),
-            GameText.Text("inventory.quick_slots_value"),
-            GameText.Text("inventory.quick_slots_meta"));
+        var weaponSlotsCard = CreateCombatInventoryPane();
+        var weaponSlotsBody = weaponSlotsCard.GetChild<VBoxContainer>(0);
+
+        var weaponSlotsRow = new VBoxContainer();
+        weaponSlotsRow.AddThemeConstantOverride("separation", 6);
+        weaponSlotsBody.AddChild(weaponSlotsRow);
+
+        for (int index = 0; index < WeaponData.MaxLoadoutSize; index++)
+        {
+            var slotCard = new PanelContainer
+            {
+                CustomMinimumSize = new Vector2(0f, 50f),
+                SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+                MouseFilter = Control.MouseFilterEnum.Ignore,
+            };
+            slotCard.AddThemeStyleboxOverride("panel", CreateCombatSlotStyle(Palette.Accent, false, false));
+            weaponSlotsRow.AddChild(slotCard);
+            _combatWeaponSlotCards.Add(slotCard);
+
+            var slotLabel = CreateLabel(12, Palette.UiText, true, 0.2f, true);
+            slotLabel.VerticalAlignment = VerticalAlignment.Center;
+            slotCard.AddChild(slotLabel);
+            _combatWeaponSlotLabels.Add(slotLabel);
+        }
+
+        leftCol.AddChild(weaponSlotsCard);
+
+        var armorCard = CreateCombatInventoryPane();
+        var armorBody = armorCard.GetChild<VBoxContainer>(0);
+
+        _combatArmorSlotCard = new PanelContainer
+        {
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+            MouseFilter = Control.MouseFilterEnum.Ignore,
+        };
+        _combatArmorSlotCard.AddThemeStyleboxOverride("panel", CreateCombatSlotStyle(Palette.FrameSoft, false, false));
+        armorBody.AddChild(_combatArmorSlotCard);
+
+        var armorSlotBody = new VBoxContainer();
+        armorSlotBody.AddThemeConstantOverride("separation", 4);
+        _combatArmorSlotCard.AddChild(armorSlotBody);
+
+        _combatArmorSlotLabel = CreateLabel(12, Palette.UiText, true, 0.2f, true);
+        armorSlotBody.AddChild(_combatArmorSlotLabel);
+
+        _combatArmorSlotMetaLabel = CreateLabel(11, Palette.UiMuted, false, 0.2f, true);
+        armorSlotBody.AddChild(_combatArmorSlotMetaLabel);
+
+        leftCol.AddChild(armorCard);
+
+        var quickSlotsCard = CreateCombatInventoryPane();
         var quickSlotsBody = quickSlotsCard.GetChild<VBoxContainer>(0);
-        
-        var quickRow = new VBoxContainer();
-        quickRow.AddThemeConstantOverride("separation", 8);
-        quickSlotsBody.AddChild(quickRow);
+
+        var quickGrid = new GridContainer
+        {
+            Columns = 2,
+        };
+        quickGrid.AddThemeConstantOverride("h_separation", 6);
+        quickGrid.AddThemeConstantOverride("v_separation", 6);
+        quickSlotsBody.AddChild(quickGrid);
 
         for (int index = 0; index < GridInventoryState.RunQuickSlotCount; index++)
         {
             int slotIndex = index;
-            var button = CreateSmallButton(GameText.Format("inventory.slot_button", index + 1), true);
+            var button = CreateCombatQuickSlotButton(index);
             button.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
             button.Pressed += () => BindQuickSlot(slotIndex);
-            quickRow.AddChild(button);
+            quickGrid.AddChild(button);
             _quickSlotButtons.Add(button);
         }
 
-        var bindingHint = CreateLabel(12, Palette.UiMuted, false, 0.2f, true);
-        bindingHint.Text = GameText.Text("inventory.binding_hint");
-        quickSlotsBody.AddChild(bindingHint);
-        
         leftCol.AddChild(quickSlotsCard);
 
-        var host = CreateInteractiveSection(GameText.Text("inventory.transfer"), GameText.Text("inventory.transfer_meta"));
-        host.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
-        host.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
-        var body = host.GetChild<VBoxContainer>(0);
-        body.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
-        body.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
-
-        _inventoryInstructionLabel = CreateLabel(12, Palette.UiMuted, false, 0.2f, true);
-        body.AddChild(_inventoryInstructionLabel);
-
-        var gridRow = new HBoxContainer();
-        gridRow.AddThemeConstantOverride("separation", 14);
-        gridRow.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
-        gridRow.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
-        body.AddChild(gridRow);
-
-        var groundColumn = new VBoxContainer();
-        groundColumn.AddThemeConstantOverride("separation", 8);
-        groundColumn.CustomMinimumSize = new Vector2(6f * GetInventoryCellSize(), 0f);
-        groundColumn.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
-        gridRow.AddChild(groundColumn);
-
-        var groundLabel = CreateLabel(13, Palette.UiText, true, 0.3f, false);
-        groundLabel.Text = GameText.Text("inventory.nearby_ground");
-        groundColumn.AddChild(groundLabel);
-
-        _combatGroundGrid = new InventoryGridControl();
-        _combatGroundGrid.Configure(6, 3, GetInventoryCellSize());
-        groundColumn.AddChild(_combatGroundGrid);
-
-        var inventoryColumn = new VBoxContainer();
-        inventoryColumn.AddThemeConstantOverride("separation", 8);
-        inventoryColumn.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
-        inventoryColumn.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
-        gridRow.AddChild(inventoryColumn);
-
-        var inventoryLabel = CreateLabel(13, Palette.UiText, true, 0.3f, false);
-        inventoryLabel.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
-        inventoryLabel.Text = GameText.Text("inventory.carried_pack");
-        inventoryColumn.AddChild(inventoryLabel);
+        var inventoryCard = CreateCombatInventoryPane();
+        inventoryCard.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+        inventoryCard.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
+        centerCol.AddChild(inventoryCard);
+        var inventoryBody = inventoryCard.GetChild<VBoxContainer>(0);
+        inventoryBody.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
 
         var inventoryScroll = new ScrollContainer
         {
@@ -321,32 +347,35 @@ public partial class ViewportOverlay
             VerticalScrollMode = ScrollContainer.ScrollMode.Auto,
             SizeFlagsVertical = Control.SizeFlags.ExpandFill,
             SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
-            CustomMinimumSize = new Vector2(0f, 300f)
+            CustomMinimumSize = new Vector2(0f, 312f)
         };
-        inventoryColumn.AddChild(inventoryScroll);
+        inventoryBody.AddChild(inventoryScroll);
 
-        var inventoryCenter = new CenterContainer();
-        inventoryCenter.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
-        inventoryCenter.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
-        inventoryScroll.AddChild(inventoryCenter);
+        var inventoryHost = new VBoxContainer();
+        inventoryHost.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+        inventoryHost.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
+        inventoryScroll.AddChild(inventoryHost);
 
         _combatInventoryGrid = new InventoryGridControl();
         _combatInventoryGrid.Configure(activeRun.Inventory.Columns, activeRun.Inventory.Rows, GetInventoryCellSize());
-        inventoryCenter.AddChild(_combatInventoryGrid);
+        inventoryHost.AddChild(_combatInventoryGrid);
 
-        rightCol.AddChild(host);
+        var groundCard = CreateCombatInventoryPane();
+        rightCol.AddChild(groundCard);
+        var groundBody = groundCard.GetChild<VBoxContainer>(0);
+
+        _combatGroundGrid = new InventoryGridControl();
+        _combatGroundGrid.Configure(CombatGroundColumns, CombatGroundRows, GetInventoryCellSize());
+        groundBody.AddChild(_combatGroundGrid);
     }
 
     private void BuildLaunchInventoryContent(Control parent, InventoryState inventory, bool canDeploy)
     {
         EnsureBaseStateSynced(inventory);
 
-        var packHost = CreateInteractiveSection(GameText.Text("inventory.deployment_pack"), GameText.Text("inventory.launch_pack_meta"));
+        var packHost = CreateCombatInventoryPane();
         packHost.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
         var packBody = packHost.GetChild<VBoxContainer>(0);
-        
-        _inventoryInstructionLabel = CreateLabel(12, Palette.UiMuted, false, 0.2f, true);
-        packBody.AddChild(_inventoryInstructionLabel);
 
         var controlsRow = new HBoxContainer();
         controlsRow.AddThemeConstantOverride("separation", 10);
@@ -382,9 +411,9 @@ public partial class ViewportOverlay
         _basePackGrid.Configure(inventory.DeploymentPack.Columns, inventory.DeploymentPack.Rows, GetInventoryCellSize());
         packCenter.AddChild(_basePackGrid);
 
-        var noteLabel = CreateLabel(12, Palette.UiMuted, false, 0.2f, true);
-        noteLabel.Text = GameText.Text("inventory.launch_resources");
-        packBody.AddChild(noteLabel);
+        _inventoryInstructionLabel = CreateLabel(12, Palette.UiMuted, false, 0.2f, true);
+        _inventoryInstructionLabel.Visible = false;
+        packBody.AddChild(_inventoryInstructionLabel);
 
         parent.AddChild(packHost);
     }
@@ -432,8 +461,11 @@ public partial class ViewportOverlay
 
         _nearbyGroundLoot = BuildNearbyGroundLootPanelState();
         _combatGroundGrid.SetItems(_nearbyGroundLoot.Items);
+        _combatGroundGrid.SetBadges(null);
         _combatInventoryGrid.SetItems(_panelRunItems);
         _combatInventoryGrid.SetBadges(BuildQuickSlotBadges());
+        UpdateCombatWeaponSlotCards();
+        UpdateCombatArmorSlotCard();
         UpdateQuickSlotButtons();
         UpdateInstructionLabel(mode);
         UpdateDragPreview(mode);
@@ -458,15 +490,119 @@ public partial class ViewportOverlay
         string itemKey = string.Join(",", activeRun.Inventory.Items.Select(item => $"{item.Id}:{item.ItemId}:{item.Quantity}:{item.X}:{item.Y}:{item.Width}:{item.Height}:{item.Rotated}"));
         string lootKey = string.Join(",", activeRun.GroundLoot.Select(drop => $"{drop.Id}:{drop.Item.Id}:{drop.Item.ItemId}:{drop.X:0.00}:{drop.Y:0.00}"));
         string quickKey = string.Join(",", activeRun.Inventory.QuickSlots.Select(slot => slot ?? "-"));
-        string key = $"{itemKey}|{lootKey}|{quickKey}";
+        string loadoutKey = string.Join(",", activeRun.Player.LoadoutWeaponIds);
+        string armorKey = $"{activeRun.Player.Armor.ArmorId}:{activeRun.Player.Armor.Durability:0.0}:{activeRun.Player.Armor.MaxDurability:0.0}:{activeRun.Player.Armor.UpgradeLevel}";
+        string key = $"{itemKey}|{lootKey}|{quickKey}|{loadoutKey}|{activeRun.Player.CurrentWeaponId}|{armorKey}";
 
         if (_heldInventoryItem == null && _combatSyncKey != key)
         {
             _panelRunItems = GridInventory.CloneItems(activeRun.Inventory.Items);
             _panelGroundLoot = activeRun.GroundLoot.Select(drop => drop.Clone()).ToList();
+            _panelRunLoadoutWeaponIds = new List<WeaponType>(activeRun.Player.LoadoutWeaponIds);
+            _panelRunCurrentWeaponId = activeRun.Player.CurrentWeaponId;
+            _panelRunArmorId = activeRun.Player.Armor.ArmorId;
+            _panelRunArmorDurability = activeRun.Player.Armor.Durability;
+            _panelRunArmorMaxDurability = activeRun.Player.Armor.MaxDurability;
+            _panelRunArmorUpgradeLevel = activeRun.Player.Armor.UpgradeLevel;
             _panelQuickSlots = (string?[])activeRun.Inventory.QuickSlots.Clone();
             _combatSyncKey = key;
         }
+    }
+
+    private void UpdateCombatWeaponSlotCards()
+    {
+        for (int index = 0; index < _combatWeaponSlotLabels.Count; index++)
+        {
+            WeaponType? weaponId = index < _panelRunLoadoutWeaponIds.Count
+                ? _panelRunLoadoutWeaponIds[index]
+                : null;
+            bool active = weaponId.HasValue && _panelRunCurrentWeaponId == weaponId.Value;
+            bool occupied = weaponId.HasValue;
+
+            string label = occupied && WeaponData.ById.TryGetValue(weaponId!.Value, out var weapon)
+                ? $"{index + 1}  {weapon.Label}"
+                : $"{index + 1}  {GameText.Text("common.empty")}";
+
+            _combatWeaponSlotLabels[index].Text = label;
+            _combatWeaponSlotLabels[index].AddThemeColorOverride("font_color", occupied ? Palette.UiText : new Color(Palette.UiText, 0.48f));
+            _combatWeaponSlotCards[index].AddThemeStyleboxOverride("panel", CreateCombatSlotStyle(Palette.Accent, occupied, active));
+        }
+    }
+
+    private void UpdateCombatArmorSlotCard()
+    {
+        if (_combatArmorSlotCard == null || _combatArmorSlotLabel == null || _combatArmorSlotMetaLabel == null)
+            return;
+
+        if (string.IsNullOrWhiteSpace(_panelRunArmorId) || !ArmorData.ById.TryGetValue(_panelRunArmorId, out var armor))
+        {
+            _combatArmorSlotLabel.Text = GameText.Text("common.empty");
+            _combatArmorSlotLabel.AddThemeColorOverride("font_color", new Color(Palette.UiText, 0.48f));
+            _combatArmorSlotMetaLabel.Text = string.Empty;
+            _combatArmorSlotCard.AddThemeStyleboxOverride("panel", CreateCombatSlotStyle(Palette.FrameSoft, false, false));
+            return;
+        }
+
+        int durability = Mathf.RoundToInt(_panelRunArmorDurability);
+        int maxDurability = Mathf.Max(1, Mathf.RoundToInt(_panelRunArmorMaxDurability));
+        int mitigation = Mathf.RoundToInt((armor.Mitigation + _panelRunArmorUpgradeLevel * 0.035f) * 100f);
+
+        _combatArmorSlotLabel.Text = armor.Label;
+        _combatArmorSlotLabel.AddThemeColorOverride("font_color", Palette.UiText);
+        _combatArmorSlotMetaLabel.Text = $"{durability}/{maxDurability}  {mitigation}%";
+        _combatArmorSlotMetaLabel.AddThemeColorOverride("font_color", new Color(Palette.UiText, 0.56f));
+        _combatArmorSlotCard.AddThemeStyleboxOverride("panel", CreateCombatSlotStyle(armor.Tint, true, false));
+    }
+
+    private bool TryGetCombatWeaponSlotIndex(Vector2 viewportPosition, out int slotIndex)
+    {
+        for (int index = 0; index < _combatWeaponSlotCards.Count; index++)
+        {
+            if (_combatWeaponSlotCards[index].GetGlobalRect().HasPoint(viewportPosition))
+            {
+                slotIndex = index;
+                return true;
+            }
+        }
+
+        slotIndex = -1;
+        return false;
+    }
+
+    private static InventoryItemRecord? CreateWeaponInventoryItem(WeaponType weaponId)
+    {
+        return GridInventory.CreateItemRecord(WeaponData.GetInventoryItemId(weaponId), 1);
+    }
+
+    private static bool TryResolveWeaponId(InventoryItemRecord? item, out WeaponType weaponId)
+    {
+        if (item != null && WeaponData.TryGetWeaponIdFromInventoryItem(item.ItemId, out weaponId))
+            return true;
+
+        weaponId = default;
+        return false;
+    }
+
+    private void InsertWeaponIntoPanelLoadout(int slotIndex, WeaponType weaponId)
+    {
+        _panelRunLoadoutWeaponIds.RemoveAll(id => id == weaponId);
+        int insertIndex = Mathf.Clamp(slotIndex, 0, _panelRunLoadoutWeaponIds.Count);
+        if (_panelRunLoadoutWeaponIds.Count >= WeaponData.MaxLoadoutSize)
+            return;
+
+        _panelRunLoadoutWeaponIds.Insert(insertIndex, weaponId);
+        if (_panelRunCurrentWeaponId == null || !_panelRunLoadoutWeaponIds.Contains(_panelRunCurrentWeaponId.Value))
+            _panelRunCurrentWeaponId = weaponId;
+    }
+
+    private WeaponType? ResolveCommittedCurrentWeaponId()
+    {
+        if (_panelRunCurrentWeaponId.HasValue && _panelRunLoadoutWeaponIds.Contains(_panelRunCurrentWeaponId.Value))
+            return _panelRunCurrentWeaponId.Value;
+
+        return _panelRunLoadoutWeaponIds.Count > 0
+            ? _panelRunLoadoutWeaponIds[0]
+            : null;
     }
 
     private bool HandleInventoryPointerPressed(GameState state, ScenePanelMode mode, Vector2 viewportPosition)
@@ -525,6 +661,24 @@ public partial class ViewportOverlay
 
         if (mode != ScenePanelMode.CombatInventory)
             return false;
+
+        if (TryGetCombatWeaponSlotIndex(viewportPosition, out var weaponSlotIndex))
+        {
+            if (weaponSlotIndex >= _panelRunLoadoutWeaponIds.Count)
+                return false;
+
+            var weaponItem = CreateWeaponInventoryItem(_panelRunLoadoutWeaponIds[weaponSlotIndex]);
+            if (weaponItem == null)
+                return false;
+
+            _heldInventoryItem = weaponItem;
+            _heldRestoreItem = weaponItem.Clone();
+            _heldWeaponSlotIndex = weaponSlotIndex;
+            _heldInventoryOrigin = HeldInventoryOrigin.CombatWeaponSlot;
+            _panelRunLoadoutWeaponIds.RemoveAt(weaponSlotIndex);
+            UpdateInventoryInteractionLive(state);
+            return true;
+        }
 
         if (_combatGroundGrid != null && _combatGroundGrid.TryGetCellAtViewport(viewportPosition, out var groundCell))
         {
@@ -621,6 +775,26 @@ public partial class ViewportOverlay
             return true;
         }
 
+        if (TryGetCombatWeaponSlotIndex(viewportPosition, out var weaponSlotIndex)
+            && TryResolveWeaponId(_heldInventoryItem, out var heldWeaponId))
+        {
+            bool canInsert = _heldInventoryOrigin == HeldInventoryOrigin.CombatWeaponSlot
+                || _panelRunLoadoutWeaponIds.Count < WeaponData.MaxLoadoutSize;
+            if (canInsert)
+            {
+                InsertWeaponIntoPanelLoadout(weaponSlotIndex, heldWeaponId);
+                CommitCombatInventoryState();
+                ResetInteractiveDragState();
+                return true;
+            }
+        }
+
+        if (_heldInventoryOrigin == HeldInventoryOrigin.CombatWeaponSlot && _panelRunLoadoutWeaponIds.Count == 0)
+        {
+            RestoreHeldInventory(mode);
+            return true;
+        }
+
         if (_combatInventoryGrid != null && _combatInventoryGrid.TryGetCellAtViewport(viewportPosition, out var inventoryCell))
         {
             var placement = GridInventory.StoreItemAtPosition(_combatInventoryGrid.Columns, _combatInventoryGrid.Rows, _panelRunItems, _heldInventoryItem, inventoryCell.X, inventoryCell.Y);
@@ -682,6 +856,9 @@ public partial class ViewportOverlay
         var arrangedItems = new List<InventoryItemRecord>(_panelRunItems.Select(item => item.Clone()));
         if (_heldInventoryItem != null && _heldInventoryOrigin == HeldInventoryOrigin.CombatInventory)
             arrangedItems.Add(_heldInventoryItem.Clone());
+        else if (_heldInventoryOrigin == HeldInventoryOrigin.CombatWeaponSlot
+                 && TryResolveWeaponId(_heldInventoryItem, out var heldWeaponId))
+            InsertWeaponIntoPanelLoadout(_heldWeaponSlotIndex < 0 ? _panelRunLoadoutWeaponIds.Count : _heldWeaponSlotIndex, heldWeaponId);
 
         _panelRunItems = GridInventory.AutoArrange(state.Save.Session.ActiveRun.Inventory.Columns, state.Save.Session.ActiveRun.Inventory.Rows, arrangedItems);
         CommitCombatInventoryState();
@@ -742,6 +919,10 @@ public partial class ViewportOverlay
                     if (fallback.Placed)
                         _panelRunItems = fallback.Items;
                 }
+                break;
+            case HeldInventoryOrigin.CombatWeaponSlot:
+                if (TryResolveWeaponId(_heldRestoreItem, out var heldWeaponId))
+                    InsertWeaponIntoPanelLoadout(_heldWeaponSlotIndex < 0 ? _panelRunLoadoutWeaponIds.Count : _heldWeaponSlotIndex, heldWeaponId);
                 break;
             case HeldInventoryOrigin.GroundLoot:
                 if (_heldRestoreGroundDrop != null)
@@ -823,7 +1004,12 @@ public partial class ViewportOverlay
     private void CommitCombatInventoryState()
     {
         _panelQuickSlots = GridInventory.SanitizeQuickSlots(_panelQuickSlots, _panelRunItems.Select(item => item.Id));
-        GameManager.Instance?.Store?.UpdateActiveRunInventoryState(_panelRunItems, _panelGroundLoot, _panelQuickSlots);
+        GameManager.Instance?.Store?.UpdateActiveRunInventoryState(
+            _panelRunItems,
+            _panelGroundLoot,
+            _panelQuickSlots,
+            new List<WeaponType>(_panelRunLoadoutWeaponIds),
+            ResolveCommittedCurrentWeaponId());
     }
 
     private void CommitDeploymentInventoryState()
@@ -840,7 +1026,7 @@ public partial class ViewportOverlay
             .Select(drop => drop.Clone())
             .ToList();
 
-        var placement = GridInventory.PlaceItemsInGrid(6, 3, new List<InventoryItemRecord>(), nearbyDrops.Select(drop => drop.Item).ToList());
+        var placement = GridInventory.PlaceItemsInGrid(CombatGroundColumns, CombatGroundRows, new List<InventoryItemRecord>(), nearbyDrops.Select(drop => drop.Item).ToList());
         var visibleIds = new HashSet<string>(placement.PlacedIds);
         var dropByItemId = new Dictionary<string, GroundLootDrop>();
         foreach (var drop in nearbyDrops)
@@ -863,7 +1049,7 @@ public partial class ViewportOverlay
         {
             string? itemId = _panelQuickSlots[index];
             if (!string.IsNullOrWhiteSpace(itemId))
-                badges[itemId] = (index + 1).ToString();
+                badges[itemId] = index < CombatQuickSlotKeys.Length ? CombatQuickSlotKeys[index] : (index + 1).ToString();
         }
         return badges;
     }
@@ -875,6 +1061,7 @@ public partial class ViewportOverlay
 
         for (int index = 0; index < _quickSlotButtons.Count; index++)
         {
+            string hotkey = index < CombatQuickSlotKeys.Length ? CombatQuickSlotKeys[index] : (index + 1).ToString();
             string? itemId = index < _panelQuickSlots.Length ? _panelQuickSlots[index] : null;
             InventoryItemRecord? item = null;
             if (itemId != null)
@@ -885,10 +1072,14 @@ public partial class ViewportOverlay
             }
 
             string label = item != null && ItemData.ById.TryGetValue(item.ItemId, out var definition)
-                ? GameText.Format("inventory.quick_button.item", index + 1, definition.ShortLabel, GameText.QuantitySuffix(item.Quantity))
-                : GameText.Format("inventory.quick_button.empty", index + 1);
+                ? $"{hotkey}  {definition.ShortLabel}{GameText.QuantitySuffix(item.Quantity)}"
+                : hotkey;
 
             _quickSlotButtons[index].Text = label;
+            _quickSlotButtons[index].AddThemeColorOverride("font_color", item != null ? Palette.UiText : new Color(Palette.UiText, 0.48f));
+            _quickSlotButtons[index].AddThemeStyleboxOverride("normal", CreateCombatQuickSlotStyle(item != null, 0.86f));
+            _quickSlotButtons[index].AddThemeStyleboxOverride("hover", CreateCombatQuickSlotStyle(item != null, 1f));
+            _quickSlotButtons[index].AddThemeStyleboxOverride("pressed", CreateCombatQuickSlotStyle(item != null, 0.74f));
             _quickSlotButtons[index].Disabled = false;
         }
     }
@@ -900,15 +1091,12 @@ public partial class ViewportOverlay
 
         if (_heldInventoryItem == null)
         {
-            _inventoryInstructionLabel.Text = mode switch
-            {
-                ScenePanelMode.Locker => GameText.Text("inventory.instruction.locker"),
-                ScenePanelMode.Launch => GameText.Text("inventory.instruction.launch"),
-                _ => GameText.Text("inventory.instruction.combat"),
-            };
+            _inventoryInstructionLabel.Visible = false;
+            _inventoryInstructionLabel.Text = string.Empty;
             return;
         }
 
+        _inventoryInstructionLabel.Visible = true;
         string label = ItemData.ById.TryGetValue(_heldInventoryItem.ItemId, out var definition)
             ? definition.Label
             : _heldInventoryItem.ItemId;
@@ -971,6 +1159,18 @@ public partial class ViewportOverlay
 
         if (mode == ScenePanelMode.CombatInventory)
         {
+            if (TryResolveWeaponId(_heldInventoryItem, out _)
+                && TryGetCombatWeaponSlotIndex(_panelPointer, out var weaponSlotIndex)
+                && weaponSlotIndex >= 0
+                && weaponSlotIndex < _combatWeaponSlotCards.Count)
+            {
+                var slotRect = _combatWeaponSlotCards[weaponSlotIndex].GetGlobalRect();
+                bool valid = _heldInventoryOrigin == HeldInventoryOrigin.CombatWeaponSlot
+                    || _panelRunLoadoutWeaponIds.Count < WeaponData.MaxLoadoutSize;
+                _dragPreview.SetPreview(_heldInventoryItem, slotRect.Position + new Vector2(4f, 4f), cellSize, valid);
+                return;
+            }
+
             if (_combatInventoryGrid != null && _combatInventoryGrid.TryGetCellAtViewport(_panelPointer, out var packCell))
             {
                 var topLeft = _combatInventoryGrid.GetGlobalRect().Position + new Vector2(packCell.X * _combatInventoryGrid.CellSize, packCell.Y * _combatInventoryGrid.CellSize);
@@ -989,6 +1189,95 @@ public partial class ViewportOverlay
 
         var fallbackTopLeft = _panelPointer - new Vector2(_heldInventoryItem.Width * cellSize * 0.5f, _heldInventoryItem.Height * cellSize * 0.5f);
         _dragPreview.SetPreview(_heldInventoryItem, fallbackTopLeft, cellSize, false);
+    }
+
+    private PanelContainer CreateCombatInventoryPane(string? label = null)
+    {
+        var card = new PanelContainer
+        {
+            MouseFilter = Control.MouseFilterEnum.Ignore,
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+        };
+        card.AddThemeStyleboxOverride("panel", CreateCombatFrameStyle(
+            new Color(Palette.WorldFloorDeep, 0.84f),
+            new Color(Palette.Frame, 0.18f),
+            12,
+            12,
+            12,
+            12));
+
+        var body = new VBoxContainer();
+        body.AddThemeConstantOverride("separation", string.IsNullOrWhiteSpace(label) ? 0 : 8);
+        card.AddChild(body);
+
+        if (!string.IsNullOrWhiteSpace(label))
+        {
+            var titleLabel = CreateLabel(10, new Color(Palette.Frame, 0.72f), true, 1.2f, false);
+            titleLabel.Text = label;
+            body.AddChild(titleLabel);
+        }
+
+        return card;
+    }
+
+    private Button CreateCombatQuickSlotButton(int slotIndex)
+    {
+        var button = new Button
+        {
+            Text = slotIndex < CombatQuickSlotKeys.Length ? CombatQuickSlotKeys[slotIndex] : (slotIndex + 1).ToString(),
+            FocusMode = Control.FocusModeEnum.None,
+            Disabled = false,
+            CustomMinimumSize = new Vector2(96f, 40f),
+        };
+        button.AddThemeFontSizeOverride("font_size", UiScale.Font(11));
+        button.AddThemeStyleboxOverride("normal", CreateCombatQuickSlotStyle(false, 0.86f));
+        button.AddThemeStyleboxOverride("hover", CreateCombatQuickSlotStyle(false, 1f));
+        button.AddThemeStyleboxOverride("pressed", CreateCombatQuickSlotStyle(false, 0.74f));
+        return button;
+    }
+
+    private static StyleBoxFlat CreateCombatFrameStyle(Color background, Color borderColor, int left, int top, int right, int bottom)
+    {
+        var style = new StyleBoxFlat
+        {
+            BgColor = background,
+            BorderColor = borderColor,
+            ContentMarginLeft = left,
+            ContentMarginTop = top,
+            ContentMarginRight = right,
+            ContentMarginBottom = bottom,
+            CornerRadiusTopLeft = 0,
+            CornerRadiusTopRight = 0,
+            CornerRadiusBottomRight = 0,
+            CornerRadiusBottomLeft = 0,
+        };
+        style.SetBorderWidthAll(1);
+        return style;
+    }
+
+    private static StyleBoxFlat CreateCombatSlotStyle(Color accent, bool occupied, bool active)
+    {
+        float backgroundAlpha = occupied ? (active ? 0.88f : 0.76f) : 0.54f;
+        float borderAlpha = active ? 0.88f : occupied ? 0.36f : 0.18f;
+        return CreateCombatFrameStyle(
+            new Color(Palette.BgOuter, backgroundAlpha),
+            new Color(occupied ? accent : Palette.FrameSoft, borderAlpha),
+            12,
+            10,
+            12,
+            10);
+    }
+
+    private static StyleBoxFlat CreateCombatQuickSlotStyle(bool occupied, float emphasis)
+    {
+        float safeEmphasis = Mathf.Clamp(emphasis, 0.4f, 1f);
+        return CreateCombatFrameStyle(
+            new Color(Palette.BgOuter, occupied ? 0.82f * safeEmphasis : 0.6f * safeEmphasis),
+            new Color(occupied ? Palette.Accent : Palette.FrameSoft, occupied ? 0.76f * safeEmphasis : 0.28f * safeEmphasis),
+            10,
+            8,
+            10,
+            8);
     }
 
     private PanelContainer CreateInteractiveSection(string title, string meta)

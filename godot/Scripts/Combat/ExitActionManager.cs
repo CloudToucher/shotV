@@ -5,7 +5,7 @@ using ShotV.World;
 
 namespace ShotV.Combat;
 
-public enum ExitActionKind { Advance, Extract }
+public enum ExitActionKind { Extract }
 public enum ExitActionPhase { Charging, Opening }
 
 public class ExitActionState
@@ -16,12 +16,10 @@ public class ExitActionState
     public string MarkerLabel { get; set; } = "";
     public float Elapsed { get; set; }
     public float Duration { get; set; }
-    public string? NextZoneLabel { get; set; }
 }
 
 public class ExitActionManager
 {
-    private const float AdvanceChannelSeconds = 0.8f;
     private const float ExtractChannelSeconds = 1.1f;
     private const float GateOpenSeconds = 0.42f;
     private const float MarkerRange = 120f;
@@ -42,24 +40,16 @@ public class ExitActionManager
         var exitMarker = FindExitMarker(playerPos, layout);
         if (exitMarker == null) return false;
         if (_state != null) return false;
-
-        bool canAdvance = RouteManager.IsCurrentRunZoneCleared(map) && RouteManager.GetNextRunZone(map) != null;
-        bool canExtract = RouteManager.CanExtractFromRunMap(map);
-
-        if (!canAdvance && !canExtract) return false;
-
-        var kind = canAdvance ? ExitActionKind.Advance : ExitActionKind.Extract;
-        var nextZone = canAdvance ? RouteManager.GetNextRunZone(map) : null;
+        if (!RouteManager.CanExtractFromRunMap(map)) return false;
 
         _state = new ExitActionState
         {
-            Kind = kind,
+            Kind = ExitActionKind.Extract,
             Phase = ExitActionPhase.Charging,
             MarkerId = exitMarker.Value.id,
             MarkerLabel = exitMarker.Value.label,
             Elapsed = 0f,
-            Duration = kind == ExitActionKind.Advance ? AdvanceChannelSeconds : ExtractChannelSeconds,
-            NextZoneLabel = nextZone?.Label,
+            Duration = ExtractChannelSeconds,
         };
         return true;
     }
@@ -103,9 +93,7 @@ public class ExitActionManager
         float progress = Mathf.Min(1f, _state.Elapsed / _state.Duration);
         int pct = Mathf.RoundToInt(progress * 100f);
         if (_state.Phase == ExitActionPhase.Charging)
-            return _state.Kind == ExitActionKind.Advance
-                ? GameText.Format("exit.progress.advance", pct)
-                : GameText.Format("exit.progress.extract", pct);
+            return GameText.Format("exit.progress.extract", pct);
         return GameText.Format("exit.progress.opening", pct);
     }
 
@@ -119,12 +107,17 @@ public class ExitActionManager
 
     private static (string id, string label)? FindExitMarker(Vector2 playerPos, WorldMapLayout layout)
     {
+        (string id, string label)? closest = null;
+        float closestDistance = MarkerRange;
         foreach (var marker in layout.Markers)
         {
             if (marker.Kind != MarkerKind.Extraction) continue;
-            if (playerPos.DistanceTo(new Vector2(marker.X, marker.Y)) <= MarkerRange)
-                return (marker.Id, marker.Label);
+            float distance = playerPos.DistanceTo(new Vector2(marker.X, marker.Y));
+            if (distance > closestDistance) continue;
+
+            closestDistance = distance;
+            closest = (marker.Id, marker.Label);
         }
-        return null;
+        return closest;
     }
 }

@@ -13,6 +13,7 @@ public enum ScenePanelMode
     Overview,
     Locker,
     Workshop,
+    Maintenance,
     Command,
     Launch,
     CombatInventory,
@@ -71,11 +72,14 @@ public class GameStore
     {
         save.Inventory ??= new InventoryState();
         save.Inventory.DeploymentPack ??= new GridInventoryState();
+        EnsureEquipmentStates(save.Inventory);
         save.Inventory.DeploymentPack.Items = save.Inventory.DeploymentPack.Items
             .Where(IsAllowedDeploymentPackItem)
             .Select(item => item.Clone())
             .ToList();
         save.Inventory.DeploymentPack.QuickSlots = new string?[GridInventoryState.RunQuickSlotCount];
+        if (save.Session.ActiveRun != null)
+            HydrateActiveRunEquipment(save.Inventory, save.Session.ActiveRun);
 
         _state = new GameState
         {
@@ -143,6 +147,7 @@ public class GameStore
             BuildInitialReserveAmmoItems(loadout)).Items;
         nextRun.Inventory.QuickSlots = new string?[GridInventoryState.RunQuickSlotCount];
         nextRun.Resources = ShotV.Inventory.GridInventory.BuildResourceLedgerFromItems(nextRun.Inventory.Items);
+        ApplyBaseEquipmentToRun(save.Inventory, nextRun);
         save.UpdatedAt = timestamp;
         save.Base.DeploymentCount++;
         save.Inventory.DeploymentPack = new GridInventoryState
@@ -163,38 +168,6 @@ public class GameStore
         save.UpdatedAt = Now();
         save.Session.ActiveRun = snapshot.Clone();
         MergeWorldWithRunMap(save.World, snapshot.Map);
-        Commit(GameMode.Combat, save);
-    }
-
-    public void MarkCurrentZoneCleared()
-    {
-        var save = _state.Save.Clone();
-        var run = save.Session.ActiveRun;
-        if (run == null || run.Status != RunStateStatus.Active) return;
-        RouteManager.MarkCurrentZoneCleared(run.Map);
-        bool routeComplete = RouteManager.IsRunRouteComplete(run.Map);
-        run.Map.HostilesRemaining = 0;
-        run.Map.Boss.Defeated = true;
-        run.Map.Boss.Health = 0;
-        run.Stats.HighestWave = Math.Max(run.Stats.HighestWave, Math.Max(run.Map.HighestWave, run.Map.CurrentWave));
-        if (routeComplete) run.Stats.BossDefeated = true;
-        save.UpdatedAt = Now();
-        MergeWorldWithRunMap(save.World, run.Map);
-        Commit(GameMode.Combat, save);
-    }
-
-    public void AdvanceActiveRunZone(bool force = false)
-    {
-        var save = _state.Save.Clone();
-        var run = save.Session.ActiveRun;
-        if (run == null || run.Status != RunStateStatus.Active) return;
-        if (!force && !_state.Runtime.PrimaryActionReady) return;
-        var nextMap = RouteManager.AdvanceRunMapZone(run.Map);
-        if (nextMap == null) return;
-        run.Map = nextMap;
-        run.PendingOutcome = null;
-        save.UpdatedAt = Now();
-        MergeWorldWithRunMap(save.World, nextMap);
         Commit(GameMode.Combat, save);
     }
 
@@ -234,6 +207,7 @@ public class GameStore
         save.Base.Resources.Alloy += settlement.ResourcesRecovered.Alloy;
         save.Base.Resources.Research += settlement.ResourcesRecovered.Research;
         save.Inventory = settlement.Inventory;
+        PersistRunEquipmentToInventory(save.Inventory, run);
         save.Session.ActiveRun = null;
         save.Session.LastExtraction = BuildExtractionResult(run, resolvedOutcome, timestamp, settlement);
         MergeWorldWithRunMap(save.World, run.Map);
@@ -259,6 +233,7 @@ public class GameStore
     public void ResetSave()
     {
         var save = SaveState.CreateInitial();
+        EnsureEquipmentStates(save.Inventory);
         _state = new GameState
         {
             Mode = GameMode.Base,
@@ -379,6 +354,169 @@ public class GameStore
         Commit(_state.Mode, save);
     }
 
+    public void CycleEquippedWeapon(int slotIndex, int direction)
+    {
+        if (_state.Save.Session.ActiveRun != null)
+            return;
+
+        var save = _state.Save.Clone();
+        EnsureEquipmentStates(save.Inventory);
+
+        var equipped = save.Inventory.EquippedWeaponIds;
+        if (slotIndex < 0 || slotIndex >= equipped.Count || direction == 0)
+            return;
+
+        int currentCatalogIndex = System.Array.FindIndex(WeaponData.Catalog, weapon => weapon.Id == equipped[slotIndex]);
+        if (currentCatalogIndex < 0)
+            currentCatalogIndex = 0;
+
+        int step = direction > 0 ? 1 : -1;
+        int nextCatalogIndex = (currentCatalogIndex + step + WeaponData.Catalog.Length) % WeaponData.Catalog.Length;
+        var nextWeaponId = WeaponData.Catalog[nextCatalogIndex].Id;
+        int existingIndex = equipped.IndexOf(nextWeaponId);
+        if (existingIndex >= 0 && existingIndex != slotIndex)
+        {
+            (equipped[slotIndex], equipped[existingIndex]) = (equipped[existingIndex], equipped[slotIndex]);
+        }
+        else
+        {
+            equipped[slotIndex] = nextWeaponId;
+        }
+
+        save.UpdatedAt = Now();
+        Commit(_state.Mode, save);
+    }
+
+    public void SelectEquippedArmor(string armorId)
+    {
+        if (_state.Save.Session.ActiveRun != null)
+            return;
+        if (!ArmorData.ById.ContainsKey(armorId))
+            return;
+
+        var save = _state.Save.Clone();
+        EnsureEquipmentStates(save.Inventory);
+        if (!save.Inventory.OwnedArmorIds.Contains(armorId))
+            save.Inventory.OwnedArmorIds.Add(armorId);
+        save.Inventory.EquippedArmorId = armorId;
+        save.UpdatedAt = Now();
+        Commit(_state.Mode, save);
+    }
+
+    public void RepairWeapon(WeaponType weaponId)
+    {
+        if (_state.Save.Session.ActiveRun != null)
+            return;
+
+        var save = _state.Save.Clone();
+        EnsureEquipmentStates(save.Inventory);
+        var state = EnsureWeaponBenchState(save.Inventory, weaponId);
+        var repairCost = EquipmentRules.GetWeaponRepairCost(state);
+        if (!HasResourceCost(repairCost) || !CanAfford(save.Base.Resources, repairCost))
+            return;
+
+        SpendResources(save.Base.Resources, repairCost);
+        state.Durability = state.MaxDurability;
+        save.UpdatedAt = Now();
+        Commit(_state.Mode, save);
+    }
+
+    public void UpgradeWeapon(WeaponType weaponId)
+    {
+        if (_state.Save.Session.ActiveRun != null)
+            return;
+        if (!WeaponData.ById.TryGetValue(weaponId, out var definition))
+            return;
+
+        var save = _state.Save.Clone();
+        EnsureEquipmentStates(save.Inventory);
+        var state = EnsureWeaponBenchState(save.Inventory, weaponId);
+        if (state.UpgradeLevel >= EquipmentRules.MaxWeaponUpgradeLevel)
+            return;
+
+        int nextLevel = state.UpgradeLevel + 1;
+        var upgradeCost = EquipmentRules.GetWeaponUpgradeCost(definition, nextLevel);
+        if (!CanAfford(save.Base.Resources, upgradeCost))
+            return;
+
+        SpendResources(save.Base.Resources, upgradeCost);
+        state.UpgradeLevel = nextLevel;
+        state.Durability = state.MaxDurability;
+        save.UpdatedAt = Now();
+        Commit(_state.Mode, save);
+    }
+
+    public void RepairArmor(string armorId)
+    {
+        if (_state.Save.Session.ActiveRun != null)
+            return;
+        if (!ArmorData.ById.ContainsKey(armorId))
+            return;
+
+        var save = _state.Save.Clone();
+        EnsureEquipmentStates(save.Inventory);
+        var state = EnsureArmorBenchState(save.Inventory, armorId);
+        var repairCost = EquipmentRules.GetArmorRepairCost(state);
+        if (!HasResourceCost(repairCost) || !CanAfford(save.Base.Resources, repairCost))
+            return;
+
+        SpendResources(save.Base.Resources, repairCost);
+        state.Durability = state.MaxDurability;
+        save.UpdatedAt = Now();
+        Commit(_state.Mode, save);
+    }
+
+    public void UpgradeArmor(string armorId)
+    {
+        if (_state.Save.Session.ActiveRun != null)
+            return;
+        if (!ArmorData.ById.TryGetValue(armorId, out var definition))
+            return;
+
+        var save = _state.Save.Clone();
+        EnsureEquipmentStates(save.Inventory);
+        var state = EnsureArmorBenchState(save.Inventory, armorId);
+        if (state.UpgradeLevel >= EquipmentRules.MaxArmorUpgradeLevel)
+            return;
+
+        int nextLevel = state.UpgradeLevel + 1;
+        var upgradeCost = EquipmentRules.GetArmorUpgradeCost(definition, nextLevel);
+        if (!CanAfford(save.Base.Resources, upgradeCost))
+            return;
+
+        SpendResources(save.Base.Resources, upgradeCost);
+        state.UpgradeLevel = nextLevel;
+        state.Durability = state.MaxDurability;
+        save.UpdatedAt = Now();
+        Commit(_state.Mode, save);
+    }
+
+    public void RepairAllEquipment()
+    {
+        if (_state.Save.Session.ActiveRun != null)
+            return;
+
+        var save = _state.Save.Clone();
+        EnsureEquipmentStates(save.Inventory);
+        var totalCost = ResourceBundle.Zero();
+        foreach (var weaponState in save.Inventory.WeaponStates)
+            totalCost.Add(EquipmentRules.GetWeaponRepairCost(weaponState));
+        foreach (var armorState in save.Inventory.ArmorStates)
+            totalCost.Add(EquipmentRules.GetArmorRepairCost(armorState));
+
+        if (!HasResourceCost(totalCost) || !CanAfford(save.Base.Resources, totalCost))
+            return;
+
+        SpendResources(save.Base.Resources, totalCost);
+        foreach (var weaponState in save.Inventory.WeaponStates)
+            weaponState.Durability = weaponState.MaxDurability;
+        foreach (var armorState in save.Inventory.ArmorStates)
+            armorState.Durability = armorState.MaxDurability;
+
+        save.UpdatedAt = Now();
+        Commit(_state.Mode, save);
+    }
+
     public void CraftWorkshopItem(string itemId)
     {
         if (_state.Save.Session.ActiveRun != null)
@@ -435,7 +573,12 @@ public class GameStore
         Commit(GameMode.Base, save);
     }
 
-    public void UpdateActiveRunInventoryState(List<InventoryItemRecord> items, List<GroundLootDrop>? groundLoot = null, string?[]? quickSlots = null)
+    public void UpdateActiveRunInventoryState(
+        List<InventoryItemRecord> items,
+        List<GroundLootDrop>? groundLoot = null,
+        string?[]? quickSlots = null,
+        List<WeaponType>? loadoutWeaponIds = null,
+        WeaponType? currentWeaponId = null)
     {
         var save = _state.Save.Clone();
         var run = save.Session.ActiveRun;
@@ -445,6 +588,24 @@ public class GameStore
         run.Inventory.Items = ShotV.Inventory.GridInventory.CloneItems(items);
         if (groundLoot != null)
             run.GroundLoot = groundLoot.Select(drop => drop.Clone()).ToList();
+
+        if (loadoutWeaponIds != null)
+        {
+            var nextLoadout = loadoutWeaponIds
+                .Where(WeaponData.ById.ContainsKey)
+                .Distinct()
+                .Take(WeaponData.MaxLoadoutSize)
+                .ToList();
+            if (nextLoadout.Count > 0)
+            {
+                run.Player.LoadoutWeaponIds = nextLoadout;
+                run.Player.CurrentWeaponId = currentWeaponId.HasValue && nextLoadout.Contains(currentWeaponId.Value)
+                    ? currentWeaponId.Value
+                    : nextLoadout[0];
+            }
+        }
+
+        SanitizeRunLoadout(run.Player);
 
         run.Inventory.QuickSlots = ShotV.Inventory.GridInventory.SanitizeQuickSlots(
             quickSlots ?? run.Inventory.QuickSlots,
@@ -659,6 +820,12 @@ public class GameStore
         }
 
         var warnings = new List<string>();
+        var armorState = GetEquippedArmorState(save.Inventory);
+        if (armorState == null || EquipmentRules.GetDurabilityRatio(armorState.Durability, armorState.MaxDurability) < 0.2f)
+            warnings.Add("护甲接近失效");
+        if (save.Inventory.WeaponStates.Any(state => save.Inventory.EquippedWeaponIds.Contains(state.WeaponId)
+            && EquipmentRules.GetDurabilityRatio(state.Durability, state.MaxDurability) < 0.2f))
+            warnings.Add("武器耐久偏低");
         if (result.HighestThreat >= 2 && result.HealingUnits <= 0)
             warnings.Add(GameText.Text("readiness.warning.no_medical"));
         if (result.HighestThreat >= 2 && result.MobilityUnits <= 0)
@@ -678,6 +845,273 @@ public class GameStore
         }
 
         return result;
+    }
+
+    private static void EnsureEquipmentStates(InventoryState inventory)
+    {
+        inventory.EquippedWeaponIds = inventory.EquippedWeaponIds
+            .Where(WeaponData.ById.ContainsKey)
+            .Distinct()
+            .ToList();
+        foreach (var defaultWeaponId in WeaponData.DefaultLoadoutIds)
+        {
+            if (inventory.EquippedWeaponIds.Count >= WeaponData.MaxLoadoutSize)
+                break;
+            if (!inventory.EquippedWeaponIds.Contains(defaultWeaponId))
+                inventory.EquippedWeaponIds.Add(defaultWeaponId);
+        }
+        inventory.EquippedWeaponIds = inventory.EquippedWeaponIds
+            .Take(WeaponData.MaxLoadoutSize)
+            .ToList();
+        if (inventory.EquippedWeaponIds.Count == 0)
+            inventory.EquippedWeaponIds = new List<WeaponType>(WeaponData.DefaultLoadoutIds);
+
+        if (inventory.OwnedArmorIds.Count == 0)
+            inventory.OwnedArmorIds = ArmorData.Catalog.Select(armor => armor.Id).ToList();
+        inventory.OwnedArmorIds = inventory.OwnedArmorIds
+            .Where(ArmorData.ById.ContainsKey)
+            .Distinct()
+            .ToList();
+        if (inventory.OwnedArmorIds.Count == 0)
+            inventory.OwnedArmorIds.Add(ArmorData.DefaultArmorId);
+
+        if (string.IsNullOrWhiteSpace(inventory.EquippedArmorId) || !ArmorData.ById.ContainsKey(inventory.EquippedArmorId))
+            inventory.EquippedArmorId = inventory.OwnedArmorIds[0];
+        else if (!inventory.OwnedArmorIds.Contains(inventory.EquippedArmorId))
+            inventory.OwnedArmorIds.Insert(0, inventory.EquippedArmorId);
+
+        inventory.WeaponStates = inventory.WeaponStates
+            .Where(state => WeaponData.ById.ContainsKey(state.WeaponId))
+            .GroupBy(state => state.WeaponId)
+            .Select(group => group.First())
+            .ToList();
+
+        foreach (var weapon in WeaponData.Catalog)
+        {
+            var state = EnsureWeaponBenchState(inventory, weapon.Id);
+            if (state.MaxDurability <= 0f)
+            {
+                state.MaxDurability = weapon.MaxDurability;
+                if (state.Durability <= 0f)
+                    state.Durability = state.MaxDurability;
+            }
+            else
+            {
+                state.MaxDurability = weapon.MaxDurability;
+            }
+            state.Durability = Math.Clamp(state.Durability, 0f, state.MaxDurability);
+            state.UpgradeLevel = Math.Clamp(state.UpgradeLevel, 0, EquipmentRules.MaxWeaponUpgradeLevel);
+        }
+
+        foreach (var armorId in inventory.OwnedArmorIds)
+        {
+            var state = EnsureArmorBenchState(inventory, armorId);
+            if (!ArmorData.ById.TryGetValue(armorId, out var definition))
+                continue;
+
+            if (state.MaxDurability <= 0f)
+            {
+                state.MaxDurability = definition.MaxDurability;
+                if (state.Durability <= 0f)
+                    state.Durability = state.MaxDurability;
+            }
+            else
+            {
+                state.MaxDurability = definition.MaxDurability;
+            }
+            state.Durability = Math.Clamp(state.Durability, 0f, state.MaxDurability);
+            state.UpgradeLevel = Math.Clamp(state.UpgradeLevel, 0, EquipmentRules.MaxArmorUpgradeLevel);
+        }
+    }
+
+    private static WeaponBenchState EnsureWeaponBenchState(InventoryState inventory, WeaponType weaponId)
+    {
+        var existing = inventory.WeaponStates.FirstOrDefault(state => state.WeaponId == weaponId);
+        if (existing != null)
+            return existing;
+
+        float maxDurability = WeaponData.ById.TryGetValue(weaponId, out var definition)
+            ? definition.MaxDurability
+            : 100f;
+        var created = new WeaponBenchState
+        {
+            WeaponId = weaponId,
+            Durability = maxDurability,
+            MaxDurability = maxDurability,
+        };
+        inventory.WeaponStates.Add(created);
+        return created;
+    }
+
+    private static ArmorBenchState EnsureArmorBenchState(InventoryState inventory, string armorId)
+    {
+        var existing = inventory.ArmorStates.FirstOrDefault(state => state.ArmorId == armorId);
+        if (existing != null)
+            return existing;
+
+        float maxDurability = ArmorData.ById.TryGetValue(armorId, out var definition)
+            ? definition.MaxDurability
+            : 100f;
+        var created = new ArmorBenchState
+        {
+            ArmorId = armorId,
+            Durability = maxDurability,
+            MaxDurability = maxDurability,
+        };
+        inventory.ArmorStates.Add(created);
+        return created;
+    }
+
+    private static ArmorBenchState? GetEquippedArmorState(InventoryState inventory)
+    {
+        if (string.IsNullOrWhiteSpace(inventory.EquippedArmorId))
+            return null;
+
+        return inventory.ArmorStates.FirstOrDefault(state => state.ArmorId == inventory.EquippedArmorId);
+    }
+
+    private static void SanitizeRunLoadout(PlayerRunState player)
+    {
+        var loadout = player.LoadoutWeaponIds
+            .Where(WeaponData.ById.ContainsKey)
+            .Distinct()
+            .Take(WeaponData.MaxLoadoutSize)
+            .ToList();
+
+        foreach (var defaultWeaponId in WeaponData.DefaultLoadoutIds)
+        {
+            if (loadout.Count >= WeaponData.MaxLoadoutSize)
+                break;
+            if (!loadout.Contains(defaultWeaponId))
+                loadout.Add(defaultWeaponId);
+        }
+
+        if (loadout.Count == 0)
+            loadout = WeaponData.DefaultLoadoutIds.Take(WeaponData.MaxLoadoutSize).ToList();
+
+        player.LoadoutWeaponIds = loadout;
+        if (!player.LoadoutWeaponIds.Contains(player.CurrentWeaponId))
+            player.CurrentWeaponId = player.LoadoutWeaponIds[0];
+
+        player.WeaponStates = player.WeaponStates
+            .Where(state => WeaponData.ById.ContainsKey(state.WeaponId) && player.LoadoutWeaponIds.Contains(state.WeaponId))
+            .GroupBy(state => state.WeaponId)
+            .Select(group => group.First())
+            .ToList();
+    }
+
+    private static void ApplyBaseEquipmentToRun(InventoryState inventory, RunState run)
+    {
+        EnsureEquipmentStates(inventory);
+        SanitizeRunLoadout(run.Player);
+        run.Player.EnsureWeaponStates();
+        foreach (var weaponId in run.Player.LoadoutWeaponIds)
+        {
+            var source = EnsureWeaponBenchState(inventory, weaponId);
+            var target = run.Player.EnsureWeaponState(weaponId);
+            target.MaxDurability = source.MaxDurability;
+            target.Durability = Math.Clamp(source.Durability, 0f, source.MaxDurability);
+            target.UpgradeLevel = source.UpgradeLevel;
+        }
+
+        string armorId = inventory.EquippedArmorId ?? ArmorData.DefaultArmorId;
+        var armorBench = EnsureArmorBenchState(inventory, armorId);
+        run.Player.Armor = new PlayerRunState.PlayerArmorState
+        {
+            ArmorId = armorBench.ArmorId,
+            Durability = Math.Clamp(armorBench.Durability, 0f, armorBench.MaxDurability),
+            MaxDurability = armorBench.MaxDurability,
+            UpgradeLevel = armorBench.UpgradeLevel,
+        };
+
+        run.Player.MaxHealth = CombatConstants.PlayerMaxHealth + EquipmentRules.GetArmorMaxHealthBonus(run.Player.Armor);
+        run.Player.Health = run.Player.MaxHealth;
+    }
+
+    private static void HydrateActiveRunEquipment(InventoryState inventory, RunState run)
+    {
+        EnsureEquipmentStates(inventory);
+        SanitizeRunLoadout(run.Player);
+        run.Player.EnsureWeaponStates();
+        foreach (var weaponId in run.Player.LoadoutWeaponIds)
+        {
+            var bench = EnsureWeaponBenchState(inventory, weaponId);
+            var runtime = run.Player.EnsureWeaponState(weaponId);
+            if (runtime.MaxDurability <= 0f)
+            {
+                runtime.MaxDurability = bench.MaxDurability;
+                if (runtime.Durability <= 0f)
+                    runtime.Durability = bench.Durability;
+            }
+            else
+            {
+                runtime.MaxDurability = bench.MaxDurability;
+            }
+            runtime.Durability = Math.Clamp(runtime.Durability, 0f, runtime.MaxDurability);
+            runtime.UpgradeLevel = runtime.UpgradeLevel > 0 ? runtime.UpgradeLevel : bench.UpgradeLevel;
+        }
+
+        if (string.IsNullOrWhiteSpace(run.Player.Armor.ArmorId))
+        {
+            string armorId = inventory.EquippedArmorId ?? ArmorData.DefaultArmorId;
+            var bench = EnsureArmorBenchState(inventory, armorId);
+            run.Player.Armor = new PlayerRunState.PlayerArmorState
+            {
+                ArmorId = bench.ArmorId,
+                Durability = bench.Durability,
+                MaxDurability = bench.MaxDurability,
+                UpgradeLevel = bench.UpgradeLevel,
+            };
+        }
+        else
+        {
+            var bench = EnsureArmorBenchState(inventory, run.Player.Armor.ArmorId);
+            if (run.Player.Armor.MaxDurability <= 0f)
+            {
+                run.Player.Armor.MaxDurability = bench.MaxDurability;
+                if (run.Player.Armor.Durability <= 0f)
+                    run.Player.Armor.Durability = bench.Durability;
+            }
+            else
+            {
+                run.Player.Armor.MaxDurability = bench.MaxDurability;
+            }
+            run.Player.Armor.Durability = Math.Clamp(run.Player.Armor.Durability, 0f, run.Player.Armor.MaxDurability);
+            run.Player.Armor.UpgradeLevel = run.Player.Armor.UpgradeLevel > 0 ? run.Player.Armor.UpgradeLevel : bench.UpgradeLevel;
+        }
+
+        float previousRatio = run.Player.MaxHealth > 0.001f ? run.Player.Health / run.Player.MaxHealth : 1f;
+        run.Player.MaxHealth = CombatConstants.PlayerMaxHealth + EquipmentRules.GetArmorMaxHealthBonus(run.Player.Armor);
+        run.Player.Health = Math.Clamp(run.Player.MaxHealth * previousRatio, 0f, run.Player.MaxHealth);
+    }
+
+    private static void PersistRunEquipmentToInventory(InventoryState inventory, RunState run)
+    {
+        EnsureEquipmentStates(inventory);
+        foreach (var runtime in run.Player.WeaponStates)
+        {
+            var bench = EnsureWeaponBenchState(inventory, runtime.WeaponId);
+            bench.MaxDurability = runtime.MaxDurability > 0f ? runtime.MaxDurability : bench.MaxDurability;
+            bench.Durability = Math.Clamp(runtime.Durability, 0f, bench.MaxDurability);
+            bench.UpgradeLevel = Math.Max(bench.UpgradeLevel, runtime.UpgradeLevel);
+        }
+
+        if (!string.IsNullOrWhiteSpace(run.Player.Armor.ArmorId))
+        {
+            if (!inventory.OwnedArmorIds.Contains(run.Player.Armor.ArmorId))
+                inventory.OwnedArmorIds.Add(run.Player.Armor.ArmorId);
+
+            inventory.EquippedArmorId = run.Player.Armor.ArmorId;
+            var bench = EnsureArmorBenchState(inventory, run.Player.Armor.ArmorId);
+            bench.MaxDurability = run.Player.Armor.MaxDurability > 0f ? run.Player.Armor.MaxDurability : bench.MaxDurability;
+            bench.Durability = Math.Clamp(run.Player.Armor.Durability, 0f, bench.MaxDurability);
+            bench.UpgradeLevel = Math.Max(bench.UpgradeLevel, run.Player.Armor.UpgradeLevel);
+        }
+    }
+
+    private static bool HasResourceCost(ResourceBundle cost)
+    {
+        return cost.Salvage > 0 || cost.Alloy > 0 || cost.Research > 0;
     }
 
     private static bool CanAfford(BaseResources stock, ResourceBundle cost)
@@ -730,14 +1164,29 @@ public class GameStore
 
     private static List<WeaponType> BuildRunLoadout(SaveState save)
     {
-        return save.Inventory.EquippedWeaponIds.Count > 0
-            ? new List<WeaponType>(save.Inventory.EquippedWeaponIds)
-            : new List<WeaponType> { WeaponType.MachineGun, WeaponType.Grenade, WeaponType.Sniper };
+        var loadout = save.Inventory.EquippedWeaponIds
+            .Where(WeaponData.ById.ContainsKey)
+            .Distinct()
+            .Take(WeaponData.MaxLoadoutSize)
+            .ToList();
+        foreach (var defaultWeaponId in WeaponData.DefaultLoadoutIds)
+        {
+            if (loadout.Count >= WeaponData.MaxLoadoutSize)
+                break;
+            if (!loadout.Contains(defaultWeaponId))
+                loadout.Add(defaultWeaponId);
+        }
+
+        return loadout.Count > 0
+            ? loadout
+            : new List<WeaponType>(WeaponData.DefaultLoadoutIds);
     }
 
     private static List<InventoryItemRecord> BuildInitialReserveAmmoItems(IEnumerable<WeaponType> loadout)
     {
         var records = new List<InventoryItemRecord>();
+        var ammoReserves = new Dictionary<string, int>();
+
         foreach (var weaponId in loadout.Distinct())
         {
             if (!WeaponData.ById.TryGetValue(weaponId, out var weapon))
@@ -748,15 +1197,23 @@ public class GameStore
                 if (string.IsNullOrWhiteSpace(ammo.ReserveItemId) || ammo.StartingReserve <= 0)
                     continue;
 
-                int remaining = ammo.StartingReserve;
-                while (remaining > 0)
-                {
-                    int chunk = Math.Min(60, remaining);
-                    var record = ShotV.Inventory.GridInventory.CreateItemRecord(ammo.ReserveItemId, chunk);
-                    if (record != null)
-                        records.Add(record);
-                    remaining -= chunk;
-                }
+                int currentReserve = ammoReserves.TryGetValue(ammo.ReserveItemId, out var existingReserve)
+                    ? existingReserve
+                    : 0;
+                ammoReserves[ammo.ReserveItemId] = Math.Max(currentReserve, ammo.StartingReserve);
+            }
+        }
+
+        foreach (var (reserveItemId, reserveQuantity) in ammoReserves)
+        {
+            int remaining = reserveQuantity;
+            while (remaining > 0)
+            {
+                int chunk = Math.Min(60, remaining);
+                var record = ShotV.Inventory.GridInventory.CreateItemRecord(reserveItemId, chunk);
+                if (record != null)
+                    records.Add(record);
+                remaining -= chunk;
             }
         }
 

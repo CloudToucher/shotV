@@ -73,7 +73,7 @@ public partial class PlayerAvatar : Node2D
     private float _hitConfirmPulse;
     private float _lifeRatio = 1f;
     private float _arrowDistanceBase = 38f;
-    private WeaponType _weaponType = WeaponType.MachineGun;
+    private WeaponType _weaponType = WeaponData.GetDefaultWeapon().Id;
     private bool _hasAimTarget;
 
     private Color _glowColor = Palette.PlayerEdge;
@@ -122,8 +122,7 @@ public partial class PlayerAvatar : Node2D
     public void SetWeaponStyle(WeaponType weaponType)
     {
         _weaponType = weaponType;
-        if (ArrowShapes.TryGetValue(weaponType, out var shape))
-            _arrowDistanceBase = shape.Distance;
+        _arrowDistanceBase = ResolveArrowShape(weaponType).Distance;
         QueueRedraw();
     }
 
@@ -354,9 +353,7 @@ public partial class PlayerAvatar : Node2D
         DrawPolyline(CloseShape(shell), new Color(_edgeColor, 0.7f + dashFactor * 0.24f + _damagePulse * 0.24f), 2f);
         DrawColoredPolygon(core, new Color(_coreColor, 0.72f + vitality * 0.2f + _damagePulse * 0.22f));
 
-        var shape = ArrowShapes.TryGetValue(_weaponType, out var arrowShape)
-            ? arrowShape
-            : ArrowShapes[WeaponType.MachineGun];
+        var shape = ResolveArrowShape(_weaponType);
         float distanceFactor = Mathf.Clamp((aimDistance - 56f) / 220f, 0f, 1f);
         float arrowDistance = 24f + distanceFactor * 6f + _shotKick * 2.5f + dashFactor * 3.5f;
         float arrowScale = 1f + _shotKick * 0.16f + dashFactor * 0.16f;
@@ -378,6 +375,24 @@ public partial class PlayerAvatar : Node2D
             TransformShape(shape.Points, arrowCenter, aimRotation, new Vector2(arrowScale, arrowScale)),
             new Color(Palette.Accent, 0.98f));
 
+    }
+
+    private static ArrowShape ResolveArrowShape(WeaponType weaponType)
+    {
+        if (ArrowShapes.TryGetValue(weaponType, out var explicitShape))
+            return explicitShape;
+
+        if (WeaponData.ById.TryGetValue(weaponType, out var weapon))
+        {
+            return weapon.FireMode switch
+            {
+                WeaponFireMode.Launcher => ArrowShapes[WeaponType.Grenade],
+                WeaponFireMode.Precision => ArrowShapes[WeaponType.Sniper],
+                _ => ArrowShapes[WeaponType.MachineGun],
+            };
+        }
+
+        return ArrowShapes[WeaponType.MachineGun];
     }
 
     private void DrawAimReticle(Vector2 aimVector, Vector2 aimDir, float aimDistance, float dashFactor)

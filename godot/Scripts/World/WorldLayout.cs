@@ -53,7 +53,7 @@ public class WorldMapLayout
     public Rect2 Bounds { get; set; }
     public Vector2 PlayerSpawn { get; set; }
     public Vector2 BossSpawn { get; set; }
-    public Vector2 ExtractionPoint { get; set; }
+    public List<Vector2> ExtractionPoints { get; set; } = new();
     public List<Vector2> EnemySpawns { get; set; } = new();
     public List<WorldObstacle> Obstacles { get; set; } = new();
     public List<WorldMarker> Markers { get; set; } = new();
@@ -90,6 +90,7 @@ public struct CombatLayoutInput
     public string MapLabel;
     public List<RunZoneState> Regions;
     public uint Seed;
+    public int ExtractionPointCount;
 }
 
 public static class WorldLayoutBuilder
@@ -103,28 +104,35 @@ public static class WorldLayoutBuilder
         new(0.16f, 0.16f, 0.24f, 0.24f),
         new(0.66f, 0.62f, 0.24f, 0.20f),
     };
+    private static readonly Vector2[] ExtractionSlots =
+    {
+        new(0.86f, 0.76f),
+        new(0.14f, 0.22f),
+        new(0.82f, 0.18f),
+        new(0.18f, 0.72f),
+        new(0.5f, 0.12f),
+    };
 
     public static WorldMapLayout CreateCombatLayout(CombatLayoutInput input)
     {
         int regionCount = Mathf.Max(1, input.Regions.Count);
         int maxThreat = input.Regions.Count > 0 ? input.Regions.Max(region => region.ThreatLevel) : 1;
-        float width = 3400f + regionCount * 160f;
-        float height = 2500f + maxThreat * 120f;
+        float width = 4200f + regionCount * 220f;
+        float height = 3000f + maxThreat * 160f;
         var bounds = new Rect2(0, 0, width, height);
-        var playerSpawn = new Vector2(width * 0.5f, height - 220f);
+        var playerSpawn = new Vector2(width * 0.5f, height - 260f);
         var rng = new SeededRng(input.Seed);
 
         var regions = BuildCombatRegions(bounds, input.Regions);
-        var extractionRegion = regions.FirstOrDefault(region => region.Kind == WorldZoneKind.Extraction) ?? regions[^1];
-        var extractionPoint = new Vector2(extractionRegion.Bounds.End.X - 140f, extractionRegion.Bounds.GetCenter().Y);
+        var extractionPoints = CreateExtractionPoints(bounds, regions, playerSpawn, input.ExtractionPointCount);
         var bossSpawn = regions.OrderByDescending(region => region.ThreatLevel).First().Bounds.GetCenter();
 
         var obstacles = new List<WorldObstacle>();
         var safetyRects = new List<Rect2>
         {
             new(playerSpawn.X - 210, playerSpawn.Y - 170, 420, 280),
-            new(extractionPoint.X - 180, extractionPoint.Y - 180, 360, 360),
         };
+        safetyRects.AddRange(extractionPoints.Select(point => new Rect2(point.X - 180, point.Y - 180, 360, 360)));
         safetyRects.AddRange(regions.Select(region => new Rect2(region.Bounds.GetCenter() - new Vector2(110f, 110f), new Vector2(220f, 220f))));
 
         int obstacleTarget = 34 + maxThreat * 10;
@@ -169,12 +177,26 @@ public static class WorldLayoutBuilder
             index++;
         }
 
-        var spawnAnchors = CreateSpawnAnchors(regions, obstacles, playerSpawn, extractionPoint, input.Seed ^ 0x51eb851f);
+        var spawnAnchors = CreateSpawnAnchors(regions, obstacles, playerSpawn, extractionPoints, input.Seed ^ 0x51eb851f);
         var markers = new List<WorldMarker>
         {
             new() { Id = "entry", X = playerSpawn.X, Y = playerSpawn.Y + 90f, Label = GameText.Text("marker.entry.label"), Kind = MarkerKind.Entry },
-            new() { Id = "extraction", X = extractionPoint.X, Y = extractionPoint.Y, Label = GameText.Text("marker.extraction.label"), Kind = MarkerKind.Extraction },
         };
+
+        for (int extractionIndex = 0; extractionIndex < extractionPoints.Count; extractionIndex++)
+        {
+            var point = extractionPoints[extractionIndex];
+            markers.Add(new WorldMarker
+            {
+                Id = $"extraction-{extractionIndex + 1}",
+                X = point.X,
+                Y = point.Y,
+                Label = extractionPoints.Count == 1
+                    ? GameText.Text("marker.extraction.label")
+                    : $"{GameText.Text("marker.extraction.label")} {extractionIndex + 1}",
+                Kind = MarkerKind.Extraction,
+            });
+        }
 
         foreach (var region in regions)
         {
@@ -195,7 +217,7 @@ public static class WorldLayoutBuilder
             Bounds = bounds,
             PlayerSpawn = playerSpawn,
             BossSpawn = bossSpawn,
-            ExtractionPoint = extractionPoint,
+            ExtractionPoints = extractionPoints,
             EnemySpawns = spawnAnchors.Select(anchor => anchor.Position).ToList(),
             Obstacles = obstacles,
             Markers = markers,
@@ -240,7 +262,7 @@ public static class WorldLayoutBuilder
             Bounds = bounds,
             PlayerSpawn = playerSpawn,
             BossSpawn = new Vector2(1120, 280),
-            ExtractionPoint = new Vector2(1120, 1460),
+            ExtractionPoints = new List<Vector2> { new(1120, 1460) },
             EnemySpawns = new List<Vector2>(),
             Obstacles = obstacles,
             Markers = markers,
@@ -303,11 +325,82 @@ public static class WorldLayoutBuilder
         return 0;
     }
 
+    private static List<Vector2> CreateExtractionPoints(Rect2 bounds, List<WorldRegion> regions, Vector2 playerSpawn, int requestedCount)
+    {
+        int targetCount = Mathf.Clamp(requestedCount <= 0 ? 3 : requestedCount, 1, ExtractionSlots.Length);
+        var points = new List<Vector2>(targetCount);
+
+        foreach (var region in regions.Where(region => region.Kind == WorldZoneKind.Extraction))
+        {
+            var candidate = ProjectPointToNearestEdge(bounds, region.Bounds.GetCenter(), 180f);
+            if (TryRegisterExtractionPoint(points, candidate, playerSpawn) && points.Count >= targetCount)
+                return points;
+        }
+
+        foreach (var slot in ExtractionSlots)
+        {
+            var candidate = new Vector2(
+                bounds.Position.X + bounds.Size.X * slot.X,
+                bounds.Position.Y + bounds.Size.Y * slot.Y);
+            candidate = ClampToWorldMargin(bounds, candidate);
+            if (TryRegisterExtractionPoint(points, candidate, playerSpawn) && points.Count >= targetCount)
+                break;
+        }
+
+        if (points.Count == 0)
+            points.Add(new Vector2(bounds.End.X - 180f, bounds.End.Y - 220f));
+
+        return points;
+    }
+
+    private static bool TryRegisterExtractionPoint(List<Vector2> points, Vector2 candidate, Vector2 playerSpawn)
+    {
+        if (candidate.DistanceTo(playerSpawn) < 360f)
+            return false;
+
+        foreach (var existing in points)
+        {
+            if (existing.DistanceTo(candidate) < 320f)
+                return false;
+        }
+
+        points.Add(candidate);
+        return true;
+    }
+
+    private static Vector2 ProjectPointToNearestEdge(Rect2 bounds, Vector2 point, float margin)
+    {
+        float minX = bounds.Position.X + margin;
+        float maxX = bounds.End.X - margin;
+        float minY = bounds.Position.Y + margin;
+        float maxY = bounds.End.Y - margin;
+
+        float left = Mathf.Abs(point.X - bounds.Position.X);
+        float right = Mathf.Abs(bounds.End.X - point.X);
+        float top = Mathf.Abs(point.Y - bounds.Position.Y);
+        float bottom = Mathf.Abs(bounds.End.Y - point.Y);
+
+        if (left <= right && left <= top && left <= bottom)
+            return new Vector2(minX, Mathf.Clamp(point.Y, minY, maxY));
+        if (right <= top && right <= bottom)
+            return new Vector2(maxX, Mathf.Clamp(point.Y, minY, maxY));
+        if (top <= bottom)
+            return new Vector2(Mathf.Clamp(point.X, minX, maxX), minY);
+        return new Vector2(Mathf.Clamp(point.X, minX, maxX), maxY);
+    }
+
+    private static Vector2 ClampToWorldMargin(Rect2 bounds, Vector2 point)
+    {
+        return new Vector2(
+            Mathf.Clamp(point.X, bounds.Position.X + WorldMargin, bounds.End.X - WorldMargin),
+            Mathf.Clamp(point.Y, bounds.Position.Y + WorldMargin, bounds.End.Y - WorldMargin));
+    }
+
     private static List<WorldSpawnAnchor> CreateSpawnAnchors(
         List<WorldRegion> regions,
         List<WorldObstacle> obstacles,
         Vector2 playerSpawn,
-        Vector2 extractionPoint,
+        List<Vector2> extractionPoints,
         uint seed)
     {
         var rng = new SeededRng(seed);
@@ -326,7 +419,8 @@ public static class WorldLayoutBuilder
                 float y = region.Bounds.Position.Y + 96f + rng.Next() * Mathf.Max(120f, region.Bounds.Size.Y - 192f);
                 var point = new Vector2(x, y);
 
-                if (point.DistanceTo(playerSpawn) < 360f || point.DistanceTo(extractionPoint) < 260f)
+                bool nearExtraction = extractionPoints.Any(extractionPoint => point.DistanceTo(extractionPoint) < 260f);
+                if (point.DistanceTo(playerSpawn) < 360f || nearExtraction)
                     continue;
 
                 bool blocked = false;

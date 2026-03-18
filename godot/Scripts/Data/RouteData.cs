@@ -20,6 +20,7 @@ public class WorldRouteDefinition
     public string Id { get; init; } = "";
     public string Label => GameText.Text($"route.{Id}.label");
     public string Summary => GameText.Text($"route.{Id}.summary");
+    public int ExtractionPointCount { get; init; } = 3;
     public WorldRouteZoneDefinition[] Zones { get; init; } = System.Array.Empty<WorldRouteZoneDefinition>();
 }
 
@@ -30,6 +31,7 @@ public static class RouteData
         new()
         {
             Id = "combat-sandbox-route",
+            ExtractionPointCount = 3,
             Zones = new[]
             {
                 new WorldRouteZoneDefinition { Id = "perimeter-dock", Kind = WorldZoneKind.Perimeter, ThreatLevel = 1, RewardMultiplier = 1f, AllowsExtraction = true },
@@ -41,6 +43,7 @@ public static class RouteData
         new()
         {
             Id = "foundry-loop-route",
+            ExtractionPointCount = 3,
             Zones = new[]
             {
                 new WorldRouteZoneDefinition { Id = "slag-yard", Kind = WorldZoneKind.Perimeter, ThreatLevel = 1, RewardMultiplier = 1.05f, AllowsExtraction = true },
@@ -51,6 +54,7 @@ public static class RouteData
         new()
         {
             Id = "frost-wharf-route",
+            ExtractionPointCount = 4,
             Zones = new[]
             {
                 new WorldRouteZoneDefinition { Id = "ice-dock", Kind = WorldZoneKind.Perimeter, ThreatLevel = 1, RewardMultiplier = 1f, AllowsExtraction = true },
@@ -61,6 +65,7 @@ public static class RouteData
         new()
         {
             Id = "archive-drop-route",
+            ExtractionPointCount = 3,
             Zones = new[]
             {
                 new WorldRouteZoneDefinition { Id = "surface-stack", Kind = WorldZoneKind.Perimeter, ThreatLevel = 1, RewardMultiplier = 1.04f, AllowsExtraction = true },
@@ -71,6 +76,7 @@ public static class RouteData
         new()
         {
             Id = "blackwell-route",
+            ExtractionPointCount = 3,
             Zones = new[]
             {
                 new WorldRouteZoneDefinition { Id = "shaft-mouth", Kind = WorldZoneKind.Perimeter, ThreatLevel = 1, RewardMultiplier = 1.02f, AllowsExtraction = true },

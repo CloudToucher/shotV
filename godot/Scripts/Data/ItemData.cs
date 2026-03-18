@@ -267,6 +267,105 @@ public static class ItemData
         },
         new()
         {
+            Id = "weapon-machinegun",
+            Category = ItemCategory.Weapon,
+            Rarity = ItemRarity.Uncommon,
+            Width = 2,
+            Height = 2,
+            MaxStack = 1,
+            Tint = Palette.Frame,
+            AccentColor = Palette.Accent,
+        },
+        new()
+        {
+            Id = "weapon-grenade",
+            Category = ItemCategory.Weapon,
+            Rarity = ItemRarity.Rare,
+            Width = 2,
+            Height = 2,
+            MaxStack = 1,
+            Tint = Palette.Warning,
+            AccentColor = Palette.Accent,
+        },
+        new()
+        {
+            Id = "weapon-sniper",
+            Category = ItemCategory.Weapon,
+            Rarity = ItemRarity.Rare,
+            Width = 3,
+            Height = 1,
+            MaxStack = 1,
+            Tint = Palette.UiActive,
+            AccentColor = Palette.Frame,
+        },
+        new()
+        {
+            Id = "weapon-carbine",
+            Category = ItemCategory.Weapon,
+            Rarity = ItemRarity.Common,
+            Width = 2,
+            Height = 1,
+            MaxStack = 1,
+            Tint = Palette.AccentSoft,
+            AccentColor = Palette.Accent,
+        },
+        new()
+        {
+            Id = "weapon-battlerifle",
+            Category = ItemCategory.Weapon,
+            Rarity = ItemRarity.Uncommon,
+            Width = 2,
+            Height = 1,
+            MaxStack = 1,
+            Tint = Palette.FrameSoft,
+            AccentColor = Palette.Frame,
+        },
+        new()
+        {
+            Id = "weapon-smg",
+            Category = ItemCategory.Weapon,
+            Rarity = ItemRarity.Common,
+            Width = 2,
+            Height = 1,
+            MaxStack = 1,
+            Tint = Palette.AccentSoft,
+            AccentColor = Palette.Warning,
+        },
+        new()
+        {
+            Id = "weapon-marksman",
+            Category = ItemCategory.Weapon,
+            Rarity = ItemRarity.Uncommon,
+            Width = 2,
+            Height = 1,
+            MaxStack = 1,
+            Tint = Palette.UiActive,
+            AccentColor = Palette.Frame,
+        },
+        new()
+        {
+            Id = "weapon-scout",
+            Category = ItemCategory.Weapon,
+            Rarity = ItemRarity.Uncommon,
+            Width = 2,
+            Height = 1,
+            MaxStack = 1,
+            Tint = Palette.UiActive,
+            AccentColor = Palette.Accent,
+        },
+        new()
+        {
+            Id = "weapon-antimaterial",
+            Category = ItemCategory.Weapon,
+            Rarity = ItemRarity.Epic,
+            Width = 3,
+            Height = 2,
+            MaxStack = 1,
+            Tint = Palette.Danger,
+            AccentColor = Palette.Warning,
+        },
+        new()
+        {
             Id = "med-injector",
             Category = ItemCategory.Consumable,
             Rarity = ItemRarity.Common,
