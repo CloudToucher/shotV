@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using Godot;
 using ShotV.Core;
+using ShotV.Data;
 using ShotV.State;
 
 namespace ShotV.World;
@@ -96,6 +97,7 @@ public struct CombatLayoutInput
 public static class WorldLayoutBuilder
 {
     private const float WorldMargin = 140f;
+    private const float BaseFurnitureUnit = CombatConstants.GridSize * 0.5f;
     private static readonly Rect2[] RegionSlots =
     {
         new(0.08f, 0.60f, 0.25f, 0.24f),
@@ -228,31 +230,64 @@ public static class WorldLayoutBuilder
 
     public static WorldMapLayout CreateBaseLayout(uint seed = 20260314)
     {
-        var bounds = new Rect2(0, 0, 2240, 1680);
-        var playerSpawn = new Vector2(1120, 1320);
+        var bounds = new Rect2(0, 0, BaseFurnitureUnit * 80f, BaseFurnitureUnit * 60f);
+        var playerSpawn = BasePoint(40f, 47f);
         var markers = new List<WorldMarker>
         {
-            new() { Id = "command", X = 1120, Y = 320, Label = GameText.Text("marker.command.label"), Kind = MarkerKind.Station },
-            new() { Id = "locker", X = 740, Y = 720, Label = GameText.Text("marker.locker.label"), Kind = MarkerKind.Locker },
-            new() { Id = "workshop", X = 1490, Y = 760, Label = GameText.Text("marker.workshop.label"), Kind = MarkerKind.Station },
-            new() { Id = "launch", X = 1120, Y = 1460, Label = GameText.Text("marker.launch.label"), Kind = MarkerKind.Entry },
+            new() { Id = "command", X = BasePoint(40f, 10.5f).X, Y = BasePoint(40f, 10.5f).Y, Label = GameText.Text("marker.command.label"), Kind = MarkerKind.Station },
+            new() { Id = "locker", X = BasePoint(26.5f, 26.5f).X, Y = BasePoint(26.5f, 26.5f).Y, Label = GameText.Text("marker.locker.label"), Kind = MarkerKind.Locker },
+            new() { Id = "workshop", X = BasePoint(54f, 27.5f).X, Y = BasePoint(54f, 27.5f).Y, Label = GameText.Text("marker.workshop.label"), Kind = MarkerKind.Station },
+            new() { Id = "trader", X = BasePoint(63f, 49.5f).X, Y = BasePoint(63f, 49.5f).Y, Label = "军需商", Kind = MarkerKind.Station },
+            new() { Id = "launch", X = BasePoint(40f, 52f).X, Y = BasePoint(40f, 52f).Y, Label = GameText.Text("marker.launch.label"), Kind = MarkerKind.Entry },
         };
         var obstacles = new List<WorldObstacle>
         {
-            MakeObstacle("north-wall-left", 468, 176, 220, 42, ObstacleKind.Wall),
-            MakeObstacle("north-wall-right", 1552, 176, 220, 42, ObstacleKind.Wall),
-            MakeObstacle("command-console", 1038, 368, 164, 70, ObstacleKind.Station),
-            MakeObstacle("command-rack-left", 952, 452, 82, 56, ObstacleKind.Station),
-            MakeObstacle("command-rack-right", 1206, 452, 82, 56, ObstacleKind.Station),
-            MakeObstacle("locker-bank-left", 654, 762, 84, 60, ObstacleKind.Locker),
-            MakeObstacle("locker-bank-right", 748, 762, 84, 60, ObstacleKind.Locker),
-            MakeObstacle("workbench-main", 1404, 800, 154, 62, ObstacleKind.Station),
-            MakeObstacle("workbench-rack", 1580, 786, 78, 78, ObstacleKind.Station),
-            MakeObstacle("cargo-crate-left", 886, 1106, 96, 58, ObstacleKind.Cover),
-            MakeObstacle("cargo-crate-right", 1258, 1106, 96, 58, ObstacleKind.Cover),
-            MakeObstacle("launch-pillar-left", 1030, 1492, 60, 74, ObstacleKind.Wall),
-            MakeObstacle("launch-pillar-right", 1150, 1492, 60, 74, ObstacleKind.Wall),
-            MakeObstacle("launch-console", 1088, 1386, 64, 42, ObstacleKind.Station),
+            MakeBaseFurniture("north-wall-left", 14, 6, 8, 2, ObstacleKind.Wall),
+            MakeBaseFurniture("north-wall-right", 58, 6, 8, 2, ObstacleKind.Wall),
+            MakeBaseFurniture("archive-wall-left", 27, 11, 5, 2, ObstacleKind.Station, "档案墙"),
+            MakeBaseFurniture("command-holo", 37, 12, 6, 3, ObstacleKind.Station, "战术台"),
+            MakeBaseFurniture("archive-wall-right", 48, 11, 5, 2, ObstacleKind.Station),
+            MakeBaseFurniture("command-rack-left", 33, 16, 3, 2, ObstacleKind.Station),
+            MakeBaseFurniture("command-rack-right", 44, 16, 3, 2, ObstacleKind.Station),
+            MakeBaseFurniture("map-table", 37, 18, 6, 2, ObstacleKind.Cover),
+            MakeBaseFurniture("med-bay", 11, 14, 4, 2, ObstacleKind.Station, "医药柜"),
+            MakeBaseFurniture("scout-console", 56, 13, 4, 2, ObstacleKind.Station, "侦测台"),
+            MakeBaseFurniture("power-stack", 63, 11, 4, 3, ObstacleKind.Cover, "供电堆"),
+            MakeBaseFurniture("coolant-bank", 68, 12, 3, 2, ObstacleKind.Cover),
+
+            MakeBaseFurniture("bunk-a", 9, 20, 4, 2, ObstacleKind.Cover, "休整铺"),
+            MakeBaseFurniture("bunk-b", 9, 24, 4, 2, ObstacleKind.Cover),
+            MakeBaseFurniture("bunk-c", 9, 28, 4, 2, ObstacleKind.Cover),
+            MakeBaseFurniture("armor-rack", 18, 20, 3, 5, ObstacleKind.Locker, "护甲架"),
+            MakeBaseFurniture("locker-bank-left", 23, 23, 3, 3, ObstacleKind.Locker),
+            MakeBaseFurniture("locker-bank-right", 27, 23, 3, 3, ObstacleKind.Locker),
+            MakeBaseFurniture("supply-pallet", 18, 29, 4, 2, ObstacleKind.Cover),
+            MakeBaseFurniture("loadout-bench", 24, 30, 4, 2, ObstacleKind.Station, "配装台"),
+            MakeBaseFurniture("hydro-shelf", 13, 39, 4, 2, ObstacleKind.Station),
+            MakeBaseFurniture("sorter-table", 18, 43, 4, 2, ObstacleKind.Cover, "回收箱"),
+
+            MakeBaseFurniture("fabricator", 51, 23, 6, 3, ObstacleKind.Station, "加工台"),
+            MakeBaseFurniture("tool-wall", 59, 21, 3, 5, ObstacleKind.Station, "工具墙"),
+            MakeBaseFurniture("parts-rack", 64, 23, 3, 4, ObstacleKind.Locker),
+            MakeBaseFurniture("repair-bench", 52, 29, 5, 2, ObstacleKind.Station),
+            MakeBaseFurniture("drone-rack", 61, 29, 4, 2, ObstacleKind.Station, "无人机架"),
+            MakeBaseFurniture("alloy-bins", 67, 30, 3, 2, ObstacleKind.Cover),
+            MakeBaseFurniture("charge-rack", 60, 39, 4, 2, ObstacleKind.Station),
+            MakeBaseFurniture("cable-spools", 66, 42, 3, 2, ObstacleKind.Cover),
+
+            MakeBaseFurniture("prep-table", 33, 35, 14, 2, ObstacleKind.Station, "整备台"),
+            MakeBaseFurniture("salvage-left", 27, 41, 4, 3, ObstacleKind.Cover),
+            MakeBaseFurniture("prep-rack-left", 33, 40, 3, 2, ObstacleKind.Locker),
+            MakeBaseFurniture("prep-rack-right", 44, 40, 3, 2, ObstacleKind.Locker),
+            MakeBaseFurniture("sortie-pack", 49, 41, 4, 3, ObstacleKind.Cover),
+            MakeBaseFurniture("support-crates", 56, 43, 4, 2, ObstacleKind.Cover),
+            MakeBaseFurniture("trade-counter", 60, 46, 6, 2, ObstacleKind.Station, "军需商"),
+            MakeBaseFurniture("trade-rack", 67, 46, 3, 3, ObstacleKind.Locker),
+            MakeBaseFurniture("launch-cargo-left", 31, 50, 3, 2, ObstacleKind.Cover),
+            MakeBaseFurniture("launch-console", 39, 49, 3, 2, ObstacleKind.Station, "闸门控制"),
+            MakeBaseFurniture("launch-cargo-right", 46, 50, 3, 2, ObstacleKind.Cover),
+            MakeBaseFurniture("launch-pillar-left", 36, 53, 2, 3, ObstacleKind.Wall),
+            MakeBaseFurniture("launch-pillar-right", 42, 53, 2, 3, ObstacleKind.Wall),
         };
 
         return new WorldMapLayout
@@ -261,8 +296,8 @@ public static class WorldLayoutBuilder
             Seed = seed,
             Bounds = bounds,
             PlayerSpawn = playerSpawn,
-            BossSpawn = new Vector2(1120, 280),
-            ExtractionPoints = new List<Vector2> { new(1120, 1460) },
+            BossSpawn = BasePoint(40f, 10f),
+            ExtractionPoints = new List<Vector2> { BasePoint(40f, 52f) },
             EnemySpawns = new List<Vector2>(),
             Obstacles = obstacles,
             Markers = markers,
@@ -453,5 +488,24 @@ public static class WorldLayoutBuilder
     private static WorldObstacle MakeObstacle(string id, float x, float y, float w, float h, ObstacleKind kind)
     {
         return new WorldObstacle { Id = id, X = x, Y = y, Width = w, Height = h, Kind = kind };
+    }
+
+    private static Vector2 BasePoint(float cellX, float cellY)
+    {
+        return new Vector2(cellX * BaseFurnitureUnit, cellY * BaseFurnitureUnit);
+    }
+
+    private static WorldObstacle MakeBaseFurniture(string id, int cellX, int cellY, int widthCells, int heightCells, ObstacleKind kind, string? label = null)
+    {
+        return new WorldObstacle
+        {
+            Id = id,
+            X = cellX * BaseFurnitureUnit,
+            Y = cellY * BaseFurnitureUnit,
+            Width = widthCells * BaseFurnitureUnit,
+            Height = heightCells * BaseFurnitureUnit,
+            Kind = kind,
+            Label = label,
+        };
     }
 }

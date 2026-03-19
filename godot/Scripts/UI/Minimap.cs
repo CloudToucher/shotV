@@ -53,7 +53,10 @@ public partial class Minimap : Control
         foreach (var marker in _markers)
         {
             var pt = WorldToMinimapPoint(marker.X, marker.Y, origin, mapW, mapH);
-            DrawCircle(pt, 3f, new Color(Palette.MinimapMarker, 0.7f));
+            Color color = marker.Kind == MarkerKind.Extraction
+                ? Palette.MinimapExtraction
+                : Palette.MinimapMarker;
+            DrawCircle(pt, 3f, new Color(color, 0.7f));
         }
 
         // Enemies

@@ -102,7 +102,7 @@ public partial class OverviewMapControl : Control
             Color color = marker.Kind switch
             {
                 MarkerKind.Objective => Palette.Warning,
-                MarkerKind.Extraction => Palette.MinimapMarker,
+                MarkerKind.Extraction => Palette.MinimapExtraction,
                 MarkerKind.Locker => Palette.PanelWarm,
                 MarkerKind.Station => Palette.Frame,
                 _ => Palette.Frame,

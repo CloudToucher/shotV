@@ -274,7 +274,8 @@ public partial class ViewportOverlay : CanvasLayer
             _primaryButton.Disabled = state.Mode == GameMode.Base
                 ? !state.Runtime.PrimaryActionReady || !(deploymentReadiness?.CanDeploy ?? true)
                 : IsPrimaryActionDisabled(state, activeRun, canExtract);
-            _secondaryButton.Visible = false;
+            _secondaryButton.Visible = state.Mode == GameMode.Combat && canExtract;
+            _secondaryButton.Disabled = !canExtract;
         }
 
         if (!showSettlement)

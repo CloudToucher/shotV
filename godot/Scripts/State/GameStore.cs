@@ -13,6 +13,7 @@ public enum ScenePanelMode
     Overview,
     Locker,
     Workshop,
+    Shop,
     Maintenance,
     Command,
     Launch,
@@ -70,8 +71,12 @@ public class GameStore
 
     public void Initialize(SaveState save)
     {
+        save.Base ??= new BaseState();
         save.Inventory ??= new InventoryState();
         save.Inventory.DeploymentPack ??= new GridInventoryState();
+        if (save.Version < 10 && save.Base.Credits <= 0)
+            save.Base.Credits = ShopData.StartingCredits;
+        save.Version = Math.Max(save.Version, 10);
         EnsureEquipmentStates(save.Inventory);
         save.Inventory.DeploymentPack.Items = save.Inventory.DeploymentPack.Items
             .Where(IsAllowedDeploymentPackItem)
@@ -542,6 +547,36 @@ public class GameStore
 
         SpendResources(save.Base.Resources, definition.CraftCost);
         save.Inventory.StoredItems = placement.Items;
+        save.UpdatedAt = Now();
+        Commit(GameMode.Base, save);
+    }
+
+    public void BuyShopAmmo(string itemId, int quantity)
+    {
+        if (_state.Save.Session.ActiveRun != null || quantity <= 0)
+            return;
+        if (!ShopData.TryGetAmmoOffer(itemId, out var offer))
+            return;
+
+        var save = _state.Save.Clone();
+        int totalCost = offer.PricePerRound * quantity;
+        if (save.Base.Credits < totalCost)
+            return;
+
+        var incoming = BuildShopPurchaseRecords(itemId, quantity);
+        if (incoming.Count == 0)
+            return;
+
+        var placement = ShotV.Inventory.GridInventory.StoreItemsInGrid(
+            save.Inventory.DeploymentPack.Columns,
+            save.Inventory.DeploymentPack.Rows,
+            save.Inventory.DeploymentPack.Items,
+            incoming);
+        if (placement.Rejected.Count > 0)
+            return;
+
+        save.Base.Credits -= totalCost;
+        save.Inventory.DeploymentPack.Items = placement.Items;
         save.UpdatedAt = Now();
         Commit(GameMode.Base, save);
     }
@@ -1112,6 +1147,27 @@ public class GameStore
     private static bool HasResourceCost(ResourceBundle cost)
     {
         return cost.Salvage > 0 || cost.Alloy > 0 || cost.Research > 0;
+    }
+
+    private static List<InventoryItemRecord> BuildShopPurchaseRecords(string itemId, int quantity)
+    {
+        var records = new List<InventoryItemRecord>();
+        if (!ItemData.ById.TryGetValue(itemId, out var definition))
+            return records;
+
+        int remaining = quantity;
+        while (remaining > 0)
+        {
+            int chunk = Math.Min(definition.MaxStack, remaining);
+            var record = ShotV.Inventory.GridInventory.CreateItemRecord(itemId, chunk);
+            if (record == null)
+                break;
+
+            records.Add(record);
+            remaining -= chunk;
+        }
+
+        return records;
     }
 
     private static bool CanAfford(BaseResources stock, ResourceBundle cost)

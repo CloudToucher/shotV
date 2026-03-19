@@ -16,6 +16,7 @@ public class BaseState
 {
     public int FacilityLevel { get; set; } = 1;
     public int DeploymentCount { get; set; }
+    public int Credits { get; set; } = ShopData.StartingCredits;
     public BaseResources Resources { get; set; } = new() { Salvage = 120, Alloy = 24, Research = 0 };
     public List<string> UnlockedStations { get; set; } = new() { "command", "workshop" };
 
@@ -23,6 +24,7 @@ public class BaseState
     {
         FacilityLevel = FacilityLevel,
         DeploymentCount = DeploymentCount,
+        Credits = Credits,
         Resources = Resources.Clone(),
         UnlockedStations = new List<string>(UnlockedStations),
     };

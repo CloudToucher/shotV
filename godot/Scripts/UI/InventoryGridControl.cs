@@ -10,6 +10,8 @@ public partial class InventoryGridControl : Control
 {
     private readonly List<InventoryItemRecord> _items = new();
     private Dictionary<string, string> _badges = new();
+    private string? _selectedItemId;
+    private bool _hideQuantities;
 
     public int Columns { get; private set; } = 1;
     public int Rows { get; private set; } = 1;
@@ -40,6 +42,18 @@ public partial class InventoryGridControl : Control
     public void SetBadges(Dictionary<string, string>? badges)
     {
         _badges = badges ?? new Dictionary<string, string>();
+        QueueRedraw();
+    }
+
+    public void SetSelectedItemId(string? itemId)
+    {
+        _selectedItemId = itemId;
+        QueueRedraw();
+    }
+
+    public void SetHideQuantities(bool hide)
+    {
+        _hideQuantities = hide;
         QueueRedraw();
     }
 
@@ -102,9 +116,12 @@ public partial class InventoryGridControl : Control
         if (!ItemData.ById.TryGetValue(item.ItemId, out var definition))
             return;
 
+        bool selected = item.Id == _selectedItemId;
         var rect = new Rect2(x + 2f, y + 2f, item.Width * CellSize - 4f, item.Height * CellSize - 4f);
-        DrawRect(rect, new Color(definition.Tint, alpha * 0.78f));
-        DrawRect(rect, new Color(definition.AccentColor, strokeAlpha * 0.82f), false, 1.25f);
+        DrawRect(rect, new Color(definition.Tint, alpha * (selected ? 0.92f : 0.78f)));
+        if (selected)
+            DrawRect(rect.Grow(1.5f), new Color(definition.AccentColor, 0.2f));
+        DrawRect(rect, new Color(definition.AccentColor, strokeAlpha * (selected ? 1f : 0.82f)), false, selected ? 2f : 1.25f);
         DrawRect(new Rect2(rect.Position.X + 5f, rect.Position.Y + 5f, Mathf.Max(14f, rect.Size.X - 10f), 3f), new Color(definition.AccentColor, 0.74f));
         DrawRect(new Rect2(rect.Position + new Vector2(2f, 2f), new Vector2(rect.Size.X - 4f, Mathf.Max(8f, rect.Size.Y * 0.24f))), new Color(1f, 1f, 1f, accentAlpha * 0.5f));
 
@@ -114,7 +131,7 @@ public partial class InventoryGridControl : Control
         var labelPos = rect.Position + new Vector2(8f, 18f);
         DrawString(font, labelPos, label, HorizontalAlignment.Left, Mathf.Max(10f, rect.Size.X - 16f), fontSize, new Color(Palette.UiText, 0.84f));
 
-        if (item.Quantity > 1)
+        if (!_hideQuantities && item.Quantity > 1)
         {
             string quantity = $"x{item.Quantity}";
             int quantityFont = UiScale.Font(10);
@@ -124,10 +141,13 @@ public partial class InventoryGridControl : Control
 
         if (_badges.TryGetValue(item.Id, out var badge))
         {
-            var badgeRect = new Rect2(rect.Position + new Vector2(6f, rect.Size.Y - 22f), new Vector2(18f, 14f));
+            int badgeFontSize = UiScale.Font(10);
+            var badgeSize = font.GetStringSize(badge, HorizontalAlignment.Left, -1, badgeFontSize);
+            float badgeWidth = Mathf.Max(18f, badgeSize.X + 10f);
+            var badgeRect = new Rect2(rect.Position + new Vector2(6f, rect.Size.Y - 22f), new Vector2(badgeWidth, 14f));
             DrawRect(badgeRect, new Color(definition.AccentColor, 0.92f));
             DrawRect(badgeRect, new Color(Palette.BgOuter, 0.26f), false, 1f);
-            DrawString(font, badgeRect.Position + new Vector2(5f, 11f), badge, HorizontalAlignment.Left, -1, UiScale.Font(10), Palette.BgInner);
+            DrawString(font, badgeRect.Position + new Vector2(5f, 11f), badge, HorizontalAlignment.Left, -1, badgeFontSize, Palette.BgInner);
         }
     }
 

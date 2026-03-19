@@ -11,6 +11,7 @@ namespace ShotV.Scenes;
 
 public partial class BaseCampScene : Node2D, IOverlaySceneDataProvider
 {
+    private const float FurnitureUnit = CombatConstants.GridSize * 0.5f;
     private PlayerAvatar _player = null!;
     private Camera2D _camera = null!;
     private Minimap? _minimap;
@@ -81,46 +82,10 @@ public partial class BaseCampScene : Node2D, IOverlaySceneDataProvider
         DrawRect(_layout.Bounds, Palette.WorldLineStrong, false, 2f);
 
         foreach (var obstacle in _layout.Obstacles)
-        {
-            var rect = new Rect2(obstacle.X, obstacle.Y, obstacle.Width, obstacle.Height);
-            Color fill = obstacle.Kind switch
-            {
-                ObstacleKind.Cover => Palette.ObstacleCover,
-                ObstacleKind.Locker => Palette.ObstacleLocker,
-                ObstacleKind.Station => Palette.ObstacleStation,
-                _ => Palette.ObstacleFill,
-            };
-            DrawRect(rect, fill);
-            DrawRect(rect, new Color(Palette.ObstacleEdge, 0.5f), false, 1.5f);
-        }
+            DrawBaseObstacle(obstacle);
 
         foreach (var marker in _markers)
-        {
-            Color markerColor = marker.Kind switch
-            {
-                MarkerKind.Entry => Palette.Frame,
-                MarkerKind.Station => Palette.ObstacleStation,
-                MarkerKind.Locker => Palette.ObstacleLocker,
-                _ => Palette.Frame,
-            };
-
-            var position = new Vector2(marker.X, marker.Y);
-            bool isNearby = marker.Id == _nearbyMarkerId;
-            float outerRadius = isNearby ? 18f : 14f;
-            float innerRadius = isNearby ? 10f : 8f;
-
-            DrawCircle(position, outerRadius, new Color(markerColor, isNearby ? 0.35f : 0.22f));
-            DrawCircle(position, innerRadius, new Color(markerColor, isNearby ? 0.7f : 0.55f));
-            DrawArc(position, outerRadius, 0f, Mathf.Tau, 24, new Color(markerColor, isNearby ? 0.6f : 0.4f), 1.5f);
-
-            if (!isNearby)
-                continue;
-
-            var font = ThemeDB.FallbackFont;
-            int fontSize = UiScale.Font(ThemeDB.FallbackFontSize);
-            var textSize = font.GetStringSize(marker.Label, HorizontalAlignment.Center, -1, fontSize);
-            DrawString(font, position + new Vector2(-textSize.X / 2f, -outerRadius - 8f), marker.Label, HorizontalAlignment.Center, -1, fontSize, Palette.UiText);
-        }
+            DrawBaseMarker(marker);
     }
 
     public OverlayWorldSnapshot? BuildOverlayWorldSnapshot()
@@ -194,6 +159,9 @@ public partial class BaseCampScene : Node2D, IOverlaySceneDataProvider
             case "workshop":
                 store.OpenScenePanel(ScenePanelMode.Workshop);
                 break;
+            case "trader":
+                store.OpenScenePanel(ScenePanelMode.Shop);
+                break;
         }
     }
 
@@ -222,5 +190,118 @@ public partial class BaseCampScene : Node2D, IOverlaySceneDataProvider
         var worldSize = new Vector2(viewportSize.X * _camera.Zoom.X, viewportSize.Y * _camera.Zoom.Y);
         var rect = new Rect2(_camera.Position - worldSize * 0.5f, worldSize);
         return rect.Intersection(_layout.Bounds);
+    }
+
+    private void DrawBaseObstacle(WorldObstacle obstacle)
+    {
+        var rect = new Rect2(obstacle.X, obstacle.Y, obstacle.Width, obstacle.Height);
+        Color fill = obstacle.Kind switch
+        {
+            ObstacleKind.Cover => Palette.ObstacleCover,
+            ObstacleKind.Locker => Palette.ObstacleLocker,
+            ObstacleKind.Station => Palette.ObstacleStation,
+            _ => Palette.ObstacleFill,
+        };
+        float fillAlpha = obstacle.Kind switch
+        {
+            ObstacleKind.Wall => 0.82f,
+            ObstacleKind.Locker => 0.56f,
+            ObstacleKind.Station => 0.5f,
+            _ => 0.42f,
+        };
+
+        DrawRect(rect, new Color(fill, fillAlpha));
+        DrawRect(rect.Grow(-3f), new Color(1f, 1f, 1f, obstacle.Kind == ObstacleKind.Wall ? 0.04f : 0.08f));
+
+        switch (obstacle.Kind)
+        {
+            case ObstacleKind.Station:
+            {
+                var screen = new Rect2(rect.Position + new Vector2(6f, 6f), new Vector2(Mathf.Min(rect.Size.X - 12f, rect.Size.X * 0.42f), 10f));
+                if (screen.Size.X > 8f)
+                    DrawRect(screen, new Color(Palette.Frame, 0.2f));
+                break;
+            }
+            case ObstacleKind.Locker:
+            {
+                int handleCount = Mathf.Max(1, Mathf.RoundToInt(rect.Size.X / (FurnitureUnit * 1.5f)));
+                float spacing = rect.Size.X / handleCount;
+                for (int index = 0; index < handleCount; index++)
+                {
+                    float handleX = rect.Position.X + spacing * index + spacing * 0.5f - 1.5f;
+                    DrawRect(new Rect2(handleX, rect.Position.Y + 9f, 3f, Mathf.Min(14f, rect.Size.Y - 18f)), new Color(Palette.ObstacleEdge, 0.3f));
+                }
+                break;
+            }
+            case ObstacleKind.Cover:
+            {
+                DrawRect(new Rect2(rect.Position + new Vector2(5f, 5f), new Vector2(Mathf.Max(8f, rect.Size.X - 10f), 6f)), new Color(1f, 1f, 1f, 0.14f));
+                break;
+            }
+        }
+
+        DrawRect(rect, new Color(Palette.ObstacleEdge, 0.42f), false, 1.5f);
+
+        if (!string.IsNullOrWhiteSpace(obstacle.Label))
+            DrawInlineLabel(rect.Position + new Vector2(7f, 7f), obstacle.Label!, ResolveObstacleLabelColor(obstacle.Kind), 0.72f);
+    }
+
+    private void DrawBaseMarker(WorldMarker marker)
+    {
+        Color markerColor = marker.Kind switch
+        {
+            MarkerKind.Entry => Palette.Frame,
+            MarkerKind.Station => Palette.ObstacleStation,
+            MarkerKind.Locker => Palette.ObstacleLocker,
+            _ => Palette.Frame,
+        };
+
+        var position = new Vector2(marker.X, marker.Y);
+        bool isNearby = marker.Id == _nearbyMarkerId;
+        float outerRadius = isNearby ? 18f : 14f;
+        float innerRadius = isNearby ? 10f : 8f;
+
+        DrawCircle(position, outerRadius, new Color(markerColor, isNearby ? 0.35f : 0.18f));
+        DrawCircle(position, innerRadius, new Color(markerColor, isNearby ? 0.78f : 0.48f));
+        DrawArc(position, outerRadius, 0f, Mathf.Tau, 24, new Color(markerColor, isNearby ? 0.72f : 0.34f), isNearby ? 1.8f : 1.3f);
+
+        DrawCenteredLabel(position + new Vector2(0f, -outerRadius - 14f), marker.Label, markerColor, isNearby ? 0.92f : 0.58f);
+    }
+
+    private void DrawCenteredLabel(Vector2 anchor, string text, Color tint, float alpha)
+    {
+        var font = ThemeDB.FallbackFont;
+        int fontSize = UiScale.Font(ThemeDB.FallbackFontSize - 1);
+        var textSize = font.GetStringSize(text, HorizontalAlignment.Center, -1, fontSize);
+        var rect = new Rect2(
+            new Vector2(anchor.X - textSize.X * 0.5f - 8f, anchor.Y - fontSize - 6f),
+            new Vector2(textSize.X + 16f, fontSize + 10f));
+
+        DrawRect(rect, new Color(1f, 1f, 1f, 0.88f * alpha));
+        DrawRect(rect, new Color(tint, 0.42f * alpha), false, 1f);
+        DrawString(font, new Vector2(rect.Position.X + 8f, rect.End.Y - 5f), text, HorizontalAlignment.Left, -1, fontSize, new Color(Palette.UiText, alpha));
+    }
+
+    private void DrawInlineLabel(Vector2 position, string text, Color tint, float alpha)
+    {
+        var font = ThemeDB.FallbackFont;
+        int fontSize = UiScale.Font(ThemeDB.FallbackFontSize - 3);
+        var textSize = font.GetStringSize(text, HorizontalAlignment.Left, -1, fontSize);
+        var rect = new Rect2(position, new Vector2(textSize.X + 12f, fontSize + 8f));
+
+        DrawRect(rect, new Color(1f, 1f, 1f, 0.76f * alpha));
+        DrawRect(rect, new Color(tint, 0.46f * alpha), false, 1f);
+        DrawString(font, new Vector2(rect.Position.X + 6f, rect.End.Y - 4f), text, HorizontalAlignment.Left, -1, fontSize, new Color(Palette.UiText, alpha));
+    }
+
+    private static Color ResolveObstacleLabelColor(ObstacleKind kind)
+    {
+        return kind switch
+        {
+            ObstacleKind.Locker => Palette.PanelWarm,
+            ObstacleKind.Station => Palette.Frame,
+            ObstacleKind.Cover => Palette.UiMuted,
+            _ => Palette.UiMuted,
+        };
     }
 }

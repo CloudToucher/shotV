@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using Godot;
@@ -373,6 +374,8 @@ public partial class ViewportOverlay
         }
 
         var mode = ResolvePanelMode(state);
+        if (mode != ScenePanelMode.Shop)
+            CloseShopPurchaseDialog();
         RebuildPanelTabsIfNeeded(state.Mode, mode);
         UpdatePanelHeader(state, selectedRoute, currentRoute, currentZone, activeRun, mode);
         RebuildPanelContentIfNeeded(state, selectedRoute, currentRoute, currentZone, activeRun, mode);
@@ -385,6 +388,7 @@ public partial class ViewportOverlay
         {
             ScenePanelMode.Locker => GameText.Text("fullscreen.panel.title.locker"),
             ScenePanelMode.Workshop => GameText.Text("fullscreen.panel.title.workshop"),
+            ScenePanelMode.Shop => "军需商 / 商店",
             ScenePanelMode.Maintenance => "维修 / 保养",
             ScenePanelMode.Command => GameText.Text("fullscreen.panel.title.command"),
             ScenePanelMode.Launch => GameText.Text("fullscreen.panel.title.launch"),
@@ -399,6 +403,7 @@ public partial class ViewportOverlay
             ScenePanelMode.CombatInventory when activeRun != null => $"{currentRoute.Label} / {currentZone?.Label ?? activeRun.Map.CurrentZoneId}",
             ScenePanelMode.Command => GameText.Format("fullscreen.panel.meta.selected_map", selectedRoute.Label),
             ScenePanelMode.Workshop => GameText.Text("fullscreen.panel.meta.workshop"),
+            ScenePanelMode.Shop => $"现金 {FormatCredits(state.Save.Base.Credits)} / 军需弹药现货。",
             ScenePanelMode.Maintenance => "恢复武器和护甲耐久。维修消耗基地资源，不改动背包内容。",
             ScenePanelMode.Locker => GameText.Format("fullscreen.panel.meta.stored_items", state.Save.Inventory.StoredItems.Count),
             ScenePanelMode.Launch => GameText.Format("fullscreen.panel.meta.deployment_target", selectedRoute.Label, state.Save.Inventory.DeploymentPack.Items.Count),
@@ -447,6 +452,9 @@ public partial class ViewportOverlay
             case ScenePanelMode.Workshop:
                 BuildWorkshopPanel(state);
                 break;
+            case ScenePanelMode.Shop:
+                BuildShopPanel(state);
+                break;
             case ScenePanelMode.Maintenance:
                 BuildMaintenancePanel(state);
                 break;
@@ -486,6 +494,7 @@ public partial class ViewportOverlay
         if (state.Mode == GameMode.Base)
         {
             int highestThreat = selectedRoute.Zones.Length > 0 ? selectedRoute.Zones.Max(zone => zone.ThreatLevel) : 0;
+            leftCol.AddChild(CreateBaseMetricPane("现金", FormatCredits(state.Save.Base.Credits), $"初始 {ShopData.StartingCredits}"));
             leftCol.AddChild(CreateBaseMetricPane(GameText.Text("fullscreen.card.resources"), FormatBaseResources(state.Save.Base.Resources)));
             leftCol.AddChild(CreateBaseMetricPane(
                 GameText.Text("fullscreen.card.workshop"),
@@ -718,6 +727,31 @@ public partial class ViewportOverlay
             craftButton.Pressed += () => GameManager.Instance?.Store?.CraftWorkshopItem(definition.Id);
             body.AddChild(craftButton);
         }
+    }
+
+    private void BuildShopPanel(GameState state)
+    {
+        var inventory = state.Save.Inventory;
+
+        var layout = new VBoxContainer();
+        layout.AddThemeConstantOverride("separation", 12);
+        layout.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+        layout.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
+        _panelContentContainer.AddChild(layout);
+
+        var briefing = CreateCombatInventoryPane("军需交易");
+        layout.AddChild(briefing);
+        var briefingBody = briefing.GetChild<VBoxContainer>(0);
+        briefingBody.AddThemeConstantOverride("separation", 8);
+
+        var summaryRow = new HBoxContainer();
+        summaryRow.AddThemeConstantOverride("separation", 10);
+        briefingBody.AddChild(summaryRow);
+        summaryRow.AddChild(CreateBaseMetricPane("现金", FormatCredits(state.Save.Base.Credits)));
+        summaryRow.AddChild(CreateBaseMetricPane("现货", $"{ShopData.AmmoOffers.Length} 组"));
+        summaryRow.AddChild(CreateBaseMetricPane("背包", inventory.DeploymentPack.Items.Count.ToString(), $"{inventory.DeploymentPack.Columns} x {inventory.DeploymentPack.Rows}"));
+
+        BuildShopInventoryContent(layout, inventory);
     }
 
     private void BuildMaintenancePanel(GameState state)
@@ -962,6 +996,9 @@ public partial class ViewportOverlay
                 _panelPrimaryButton.Text = "升级当前配装";
                 _panelPrimaryButton.Disabled = !CanUpgradeAnyEquippedItem(state);
                 break;
+            case ScenePanelMode.Shop:
+                _panelPrimaryButton.Visible = false;
+                break;
             case ScenePanelMode.Maintenance:
                 _panelPrimaryButton.Text = "全部维修";
                 _panelPrimaryButton.Disabled = !CanRepairAnyEquipment(state);
@@ -1029,6 +1066,8 @@ public partial class ViewportOverlay
                         && CanAfford(state.Save.Base.Resources, EquipmentRules.GetArmorUpgradeCost(equippedArmor, armorState.UpgradeLevel + 1)))
                         store.UpgradeArmor(equippedArmor.Id);
                 }
+                break;
+            case ScenePanelMode.Shop:
                 break;
             case ScenePanelMode.Maintenance:
                 store.RepairAllEquipment();
@@ -1180,6 +1219,7 @@ public partial class ViewportOverlay
             yield return (ScenePanelMode.Overview, GameText.Text("fullscreen.tab.overview"));
             yield return (ScenePanelMode.Locker, GameText.Text("fullscreen.tab.locker"));
             yield return (ScenePanelMode.Workshop, GameText.Text("fullscreen.tab.workshop"));
+            yield return (ScenePanelMode.Shop, "商店");
             yield return (ScenePanelMode.Maintenance, "维修");
             yield return (ScenePanelMode.Command, GameText.Text("fullscreen.tab.command"));
             yield return (ScenePanelMode.Launch, GameText.Text("fullscreen.tab.launch"));
@@ -1200,7 +1240,7 @@ public partial class ViewportOverlay
         string equipmentKey = activeRun == null
             ? $"{string.Join(",", state.Save.Inventory.WeaponStates.Select(item => $"{item.WeaponId}:{item.Durability:0.0}:{item.UpgradeLevel}"))}|{string.Join(",", state.Save.Inventory.ArmorStates.Select(item => $"{item.ArmorId}:{item.Durability:0.0}:{item.UpgradeLevel}"))}|{state.Save.Inventory.EquippedArmorId}"
             : $"{string.Join(",", activeRun.Player.WeaponStates.Select(item => $"{item.WeaponId}:{item.Durability:0.0}:{item.UpgradeLevel}"))}|{activeRun.Player.Armor.ArmorId}:{activeRun.Player.Armor.Durability:0.0}:{activeRun.Player.Armor.UpgradeLevel}";
-        string resourceKey = $"{state.Save.Base.Resources.Salvage}:{state.Save.Base.Resources.Alloy}:{state.Save.Base.Resources.Research}";
+        string resourceKey = $"{state.Save.Base.Resources.Salvage}:{state.Save.Base.Resources.Alloy}:{state.Save.Base.Resources.Research}:{state.Save.Base.Credits}";
         return $"{state.Mode}:{mode}:{state.Save.World.SelectedRouteId}:{inventoryKey}:{loadoutKey}:{lootKey}:{equipmentKey}:{resourceKey}:{state.Runtime.NearbyLootCount}:{activeRun?.Stats.Kills ?? 0}";
     }
 
@@ -1247,6 +1287,103 @@ public partial class ViewportOverlay
             return GameText.Text("common.no_base_stock");
 
         return GameText.Format("fullscreen.base_resources", resources.Salvage, resources.Alloy, resources.Research);
+    }
+
+    private static string FormatCredits(int credits)
+    {
+        return $"{Mathf.Max(0, credits):N0} 元";
+    }
+
+    private static bool CanPurchaseShopAmmo(GameState state, string itemId, int quantity)
+    {
+        if (state.Mode != GameMode.Base || state.Save.Session.ActiveRun != null || quantity <= 0)
+            return false;
+        if (!ShopData.TryGetAmmoOffer(itemId, out var offer))
+            return false;
+        if (state.Save.Base.Credits < offer.PricePerRound * quantity)
+            return false;
+
+        var incoming = BuildShopPurchasePreviewRecords(itemId, quantity);
+        if (incoming.Count == 0)
+            return false;
+
+        var preview = GridInventory.StoreItemsInGrid(
+            state.Save.Inventory.DeploymentPack.Columns,
+            state.Save.Inventory.DeploymentPack.Rows,
+            state.Save.Inventory.DeploymentPack.Items,
+            incoming);
+        return preview.Rejected.Count == 0;
+    }
+
+    private static string ResolveShopAmmoBlocker(GameState state, string itemId, int quantity)
+    {
+        if (!ShopData.TryGetAmmoOffer(itemId, out var offer))
+            return "未上架";
+        if (state.Save.Base.Credits < offer.PricePerRound * quantity)
+            return "现金不足";
+
+        var incoming = BuildShopPurchasePreviewRecords(itemId, quantity);
+        if (incoming.Count == 0)
+            return "货品异常";
+
+        var preview = GridInventory.StoreItemsInGrid(
+            state.Save.Inventory.DeploymentPack.Columns,
+            state.Save.Inventory.DeploymentPack.Rows,
+            state.Save.Inventory.DeploymentPack.Items,
+            incoming);
+        return preview.Rejected.Count == 0 ? "可购买" : "背包已满";
+    }
+
+    private static List<InventoryItemRecord> BuildShopPurchasePreviewRecords(string itemId, int quantity)
+    {
+        var records = new List<InventoryItemRecord>();
+        if (!ItemData.ById.TryGetValue(itemId, out var definition) || quantity <= 0)
+            return records;
+
+        int remaining = quantity;
+        while (remaining > 0)
+        {
+            int chunk = Math.Min(definition.MaxStack, remaining);
+            var record = GridInventory.CreateItemRecord(itemId, chunk);
+            if (record == null)
+                break;
+
+            records.Add(record);
+            remaining -= chunk;
+        }
+
+        return records;
+    }
+
+    private static string ResolveShopAmmoHint(string itemId)
+    {
+        var ammo = WeaponData.FindAmmoByReserveItem(itemId);
+        if (ammo != null && !string.IsNullOrWhiteSpace(ammo.Hint))
+            return ammo.Hint;
+
+        return ItemData.ById.TryGetValue(itemId, out var definition) ? definition.Label : itemId;
+    }
+
+    private static string ResolveShopGroupTitle(string groupId)
+    {
+        return groupId switch
+        {
+            "automatic" => "自动武器",
+            "launcher" => "榴弹",
+            "precision" => "精确武器",
+            _ => "军需货架",
+        };
+    }
+
+    private static string ResolveShopGroupMeta(string groupId)
+    {
+        return groupId switch
+        {
+            "automatic" => "球弹、曳光、空尖、强化与穿甲。",
+            "launcher" => "破片、爆压、破门、电弧与钢针榴弹。",
+            "precision" => "竞赛、超侵彻、破裂、脱壳与爆炸弹头。",
+            _ => "基础弹药现货。",
+        };
     }
 
     private static string FormatCompactResourceBundle(ResourceBundle bundle)

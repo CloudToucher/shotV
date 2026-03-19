@@ -172,7 +172,7 @@ public partial class CombatRenderer : Node2D
             {
                 WorldZoneKind.HighValue => Palette.Warning,
                 WorldZoneKind.HighRisk => Palette.Danger,
-                WorldZoneKind.Extraction => Palette.MinimapMarker,
+                WorldZoneKind.Extraction => Palette.MinimapExtraction,
                 _ => Palette.Frame,
             };
 
@@ -285,7 +285,7 @@ public partial class CombatRenderer : Node2D
             Color color = marker.Kind switch
             {
                 MarkerKind.Objective => Palette.Warning,
-                MarkerKind.Extraction => Palette.MinimapMarker,
+                MarkerKind.Extraction => Palette.MinimapExtraction,
                 MarkerKind.Locker => Palette.Warning,
                 MarkerKind.Station => Palette.Frame,
                 _ => Palette.Frame,

@@ -35,6 +35,7 @@ public static class Palette
     public static readonly Color MinimapObstacle = FromHex(0xbacdd8);
     public static readonly Color MinimapPlayer = FromHex(0x4db9e6);
     public static readonly Color MinimapEnemy = FromHex(0xff6b6b);
+    public static readonly Color MinimapExtraction = FromHex(0x39c97a);
     public static readonly Color MinimapMarker = FromHex(0xffb033);
 
     public static readonly Color ArenaFill = FromHex(0xf4f9fc);

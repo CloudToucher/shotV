@@ -43,6 +43,15 @@ public partial class ViewportOverlay
     private InventoryGridControl? _basePackGrid;
     private InventoryGridControl? _combatGroundGrid;
     private InventoryGridControl? _combatInventoryGrid;
+    private InventoryGridControl? _shopStockGrid;
+    private InventoryGridControl? _shopBuyGrid;
+    private InventoryGridControl? _shopStashGrid;
+    private Control? _shopPurchaseLayer;
+    private Label? _shopPurchaseTitleLabel;
+    private Label? _shopPurchaseMetaLabel;
+    private Label? _shopPurchaseTotalLabel;
+    private SpinBox? _shopPurchaseQuantityInput;
+    private Button? _shopPurchaseConfirmButton;
     private InventoryDragPreviewControl? _dragPreview;
     private readonly List<PanelContainer> _combatWeaponSlotCards = new();
     private readonly List<Label> _combatWeaponSlotLabels = new();
@@ -51,11 +60,18 @@ public partial class ViewportOverlay
     private Label? _combatArmorSlotLabel;
     private Label? _combatArmorSlotMetaLabel;
     private Label? _inventoryInstructionLabel;
+    private Label? _shopCreditsLabel;
+    private Label? _shopSelectionLabel;
+    private Label? _shopSelectionMetaLabel;
+    private Label? _shopSelectionHintLabel;
+    private Label? _shopActionHintLabel;
 
     private List<InventoryItemRecord> _panelStashItems = new();
     private List<InventoryItemRecord> _panelDeploymentPackItems = new();
     private List<InventoryItemRecord> _panelRunItems = new();
     private List<GroundLootDrop> _panelGroundLoot = new();
+    private List<InventoryItemRecord> _shopStockItems = new();
+    private List<InventoryItemRecord> _shopBuyItems = new();
     private List<WeaponType> _panelRunLoadoutWeaponIds = new();
     private string?[] _panelQuickSlots = new string?[GridInventoryState.RunQuickSlotCount];
     private NearbyGroundLootPanelState _nearbyGroundLoot = new();
@@ -72,6 +88,8 @@ public partial class ViewportOverlay
     private float _panelRunArmorDurability;
     private float _panelRunArmorMaxDurability;
     private int _panelRunArmorUpgradeLevel;
+    private string? _shopSelectedItemId;
+    private string? _shopPurchaseItemId;
     private HeldInventoryOrigin _heldInventoryOrigin;
 
     public override void _Input(InputEvent @event)
@@ -86,8 +104,15 @@ public partial class ViewportOverlay
             return;
 
         var mode = ResolvePanelMode(store.State);
-        if (mode is not ScenePanelMode.Locker and not ScenePanelMode.Launch and not ScenePanelMode.CombatInventory)
+        if (mode is not ScenePanelMode.Locker and not ScenePanelMode.Launch and not ScenePanelMode.CombatInventory and not ScenePanelMode.Shop)
             return;
+
+        if (mode == ScenePanelMode.Shop && IsShopPurchaseDialogVisible() && @event.IsActionPressed("ui_cancel"))
+        {
+            CloseShopPurchaseDialog();
+            GetViewport().SetInputAsHandled();
+            return;
+        }
 
         if (@event is InputEventMouseMotion motion)
         {
@@ -99,6 +124,17 @@ public partial class ViewportOverlay
         if (@event is InputEventMouseButton button && button.ButtonIndex == MouseButton.Left)
         {
             _panelPointer = button.Position;
+            if (mode == ScenePanelMode.Shop)
+            {
+                if (IsShopPurchaseDialogVisible())
+                    return;
+
+                bool shopConsumed = button.Pressed && HandleShopPointerPressed(store.State, button.Position, button.DoubleClick);
+                if (shopConsumed)
+                    GetViewport().SetInputAsHandled();
+                return;
+            }
+
             if (mode == ScenePanelMode.CombatInventory && IsPointerOverQuickSlotButton(button.Position))
                 return;
 
@@ -110,14 +146,14 @@ public partial class ViewportOverlay
             return;
         }
 
-        if (@event.IsActionPressed("rotate_item"))
+        if (mode != ScenePanelMode.Shop && @event.IsActionPressed("rotate_item"))
         {
             RotateHeldInventoryItem();
             GetViewport().SetInputAsHandled();
             return;
         }
 
-        if (@event.IsActionPressed("sort_inventory"))
+        if (mode != ScenePanelMode.Shop && @event.IsActionPressed("sort_inventory"))
         {
             AutoArrangeInteractiveInventory(store.State, mode);
             GetViewport().SetInputAsHandled();
@@ -139,6 +175,160 @@ public partial class ViewportOverlay
         _dragPreview.SetAnchorsPreset(Control.LayoutPreset.FullRect);
         _dragPreview.Visible = false;
         _panelLayer.AddChild(_dragPreview);
+
+        BuildShopPurchaseDialog();
+    }
+
+    private void BuildShopPurchaseDialog()
+    {
+        _shopPurchaseLayer = new Control
+        {
+            Visible = false,
+            MouseFilter = Control.MouseFilterEnum.Stop,
+        };
+        _shopPurchaseLayer.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+        _panelLayer.AddChild(_shopPurchaseLayer);
+
+        var backdrop = new ColorRect
+        {
+            Color = new Color(Palette.BgOuter, 0.42f),
+            MouseFilter = Control.MouseFilterEnum.Stop,
+        };
+        backdrop.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+        backdrop.GuiInput += @event =>
+        {
+            if (@event is InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.Left })
+                CloseShopPurchaseDialog();
+        };
+        _shopPurchaseLayer.AddChild(backdrop);
+
+        var center = new CenterContainer
+        {
+            MouseFilter = Control.MouseFilterEnum.Ignore,
+        };
+        center.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+        _shopPurchaseLayer.AddChild(center);
+
+        var modal = new PanelContainer
+        {
+            CustomMinimumSize = new Vector2(360f, 0f),
+            MouseFilter = Control.MouseFilterEnum.Stop,
+        };
+        modal.AddThemeStyleboxOverride("panel", CreatePanelStyle(
+            new Color(1f, 1f, 1f, 0.98f),
+            new Color(Palette.Frame, 0.46f),
+            20,
+            20,
+            20,
+            18,
+            0));
+        center.AddChild(modal);
+
+        var body = new VBoxContainer();
+        body.AddThemeConstantOverride("separation", 10);
+        modal.AddChild(body);
+
+        _shopPurchaseTitleLabel = CreateLabel(18, Palette.UiText, true, 0.2f, true);
+        body.AddChild(_shopPurchaseTitleLabel);
+
+        _shopPurchaseMetaLabel = CreateLabel(12, Palette.UiMuted, false, 0.2f, true);
+        body.AddChild(_shopPurchaseMetaLabel);
+
+        _shopPurchaseQuantityInput = new SpinBox
+        {
+            MinValue = 1,
+            MaxValue = 1,
+            Step = 1,
+            Rounded = true,
+            CustomMinimumSize = new Vector2(0f, 40f),
+            FocusMode = Control.FocusModeEnum.Click,
+        };
+        _shopPurchaseQuantityInput.AddThemeFontSizeOverride("font_size", UiScale.Font(14));
+        _shopPurchaseQuantityInput.ValueChanged += _ => RefreshShopPurchaseDialog();
+        body.AddChild(_shopPurchaseQuantityInput);
+
+        _shopPurchaseTotalLabel = CreateLabel(13, Palette.Accent, false, 0.2f, true);
+        body.AddChild(_shopPurchaseTotalLabel);
+
+        var actions = new HBoxContainer();
+        actions.AddThemeConstantOverride("separation", 8);
+        body.AddChild(actions);
+
+        var cancelButton = CreateActionButton("取消", false);
+        cancelButton.Pressed += CloseShopPurchaseDialog;
+        actions.AddChild(cancelButton);
+
+        _shopPurchaseConfirmButton = CreateActionButton("购买", true);
+        _shopPurchaseConfirmButton.Pressed += CommitShopPurchaseFromDialog;
+        actions.AddChild(_shopPurchaseConfirmButton);
+    }
+
+    private bool IsShopPurchaseDialogVisible()
+    {
+        return _shopPurchaseLayer?.Visible == true;
+    }
+
+    private void OpenShopPurchaseDialog(GameState state, string itemId)
+    {
+        if (_shopPurchaseLayer == null || _shopPurchaseQuantityInput == null || !ItemData.ById.ContainsKey(itemId))
+            return;
+
+        _shopPurchaseItemId = itemId;
+        int maxQuantity = ResolveMaxShopPurchaseQuantity(state, itemId);
+        int defaultQuantity = maxQuantity > 0
+            ? Math.Min(ItemData.ById[itemId].MaxStack, maxQuantity)
+            : 1;
+
+        _shopPurchaseQuantityInput.MinValue = 1;
+        _shopPurchaseQuantityInput.MaxValue = Math.Max(1, maxQuantity);
+        _shopPurchaseQuantityInput.Value = defaultQuantity;
+        _shopPurchaseLayer.Visible = true;
+        RefreshShopPurchaseDialog();
+        _shopPurchaseQuantityInput.GrabFocus();
+    }
+
+    private void RefreshShopPurchaseDialog()
+    {
+        if (_shopPurchaseLayer == null || !_shopPurchaseLayer.Visible || _shopPurchaseQuantityInput == null || _shopPurchaseTitleLabel == null || _shopPurchaseMetaLabel == null || _shopPurchaseTotalLabel == null || _shopPurchaseConfirmButton == null)
+            return;
+
+        var state = GameManager.Instance?.Store?.State;
+        if (state == null || string.IsNullOrWhiteSpace(_shopPurchaseItemId) || !ItemData.ById.TryGetValue(_shopPurchaseItemId, out var definition) || !ShopData.TryGetAmmoOffer(_shopPurchaseItemId, out var offer))
+        {
+            CloseShopPurchaseDialog();
+            return;
+        }
+
+        int maxQuantity = ResolveMaxShopPurchaseQuantity(state, _shopPurchaseItemId);
+        int clampedQuantity = Math.Clamp((int)Math.Round(_shopPurchaseQuantityInput.Value), 1, Math.Max(1, maxQuantity));
+        if ((int)Math.Round(_shopPurchaseQuantityInput.Value) != clampedQuantity)
+            _shopPurchaseQuantityInput.Value = clampedQuantity;
+
+        bool canBuy = maxQuantity > 0 && CanPurchaseShopAmmo(state, _shopPurchaseItemId, clampedQuantity);
+        _shopPurchaseTitleLabel.Text = definition.Label;
+        _shopPurchaseMetaLabel.Text = $"单价 {offer.PricePerRound} 元 / 发 / 最多 {maxQuantity} 发";
+        _shopPurchaseTotalLabel.Text = canBuy
+            ? $"共 {offer.PricePerRound * clampedQuantity} 元"
+            : ResolveShopAmmoBlocker(state, _shopPurchaseItemId, clampedQuantity);
+        _shopPurchaseTotalLabel.AddThemeColorOverride("font_color", canBuy ? Palette.Accent : new Color(Palette.UiText, 0.56f));
+        _shopPurchaseConfirmButton.Disabled = !canBuy;
+    }
+
+    private void CommitShopPurchaseFromDialog()
+    {
+        if (_shopPurchaseQuantityInput == null || string.IsNullOrWhiteSpace(_shopPurchaseItemId))
+            return;
+
+        int quantity = Math.Max(1, (int)Math.Round(_shopPurchaseQuantityInput.Value));
+        GameManager.Instance?.Store?.BuyShopAmmo(_shopPurchaseItemId, quantity);
+        CloseShopPurchaseDialog();
+    }
+
+    private void CloseShopPurchaseDialog()
+    {
+        _shopPurchaseItemId = null;
+        if (_shopPurchaseLayer != null)
+            _shopPurchaseLayer.Visible = false;
     }
 
     private void ResetInteractiveWidgetRefs()
@@ -147,10 +337,18 @@ public partial class ViewportOverlay
         _basePackGrid = null;
         _combatGroundGrid = null;
         _combatInventoryGrid = null;
+        _shopStockGrid = null;
+        _shopBuyGrid = null;
+        _shopStashGrid = null;
         _combatArmorSlotCard = null;
         _combatArmorSlotLabel = null;
         _combatArmorSlotMetaLabel = null;
         _inventoryInstructionLabel = null;
+        _shopCreditsLabel = null;
+        _shopSelectionLabel = null;
+        _shopSelectionMetaLabel = null;
+        _shopSelectionHintLabel = null;
+        _shopActionHintLabel = null;
         _combatWeaponSlotCards.Clear();
         _combatWeaponSlotLabels.Clear();
         _quickSlotButtons.Clear();
@@ -165,6 +363,7 @@ public partial class ViewportOverlay
         _heldInventoryOrigin = HeldInventoryOrigin.None;
         _baseSyncKey = string.Empty;
         _combatSyncKey = string.Empty;
+        CloseShopPurchaseDialog();
         _dragPreview?.SetPreview(null, Vector2.Zero, 32f, false);
     }
 
@@ -418,6 +617,69 @@ public partial class ViewportOverlay
         parent.AddChild(packHost);
     }
 
+    private void BuildShopInventoryContent(Control parent, InventoryState inventory)
+    {
+        EnsureShopStateSynced(inventory);
+
+        var split = new HBoxContainer();
+        split.AddThemeConstantOverride("separation", 18);
+        split.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+        split.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
+        parent.AddChild(split);
+
+        var shelfPane = CreateCombatInventoryPane("军需货架");
+        shelfPane.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+        shelfPane.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
+        split.AddChild(shelfPane);
+        var shelfBody = shelfPane.GetChild<VBoxContainer>(0);
+        shelfBody.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
+
+        var shelfScroll = new ScrollContainer
+        {
+            HorizontalScrollMode = ScrollContainer.ScrollMode.Auto,
+            VerticalScrollMode = ScrollContainer.ScrollMode.Auto,
+            SizeFlagsVertical = Control.SizeFlags.ExpandFill,
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+            CustomMinimumSize = new Vector2(0f, 300f)
+        };
+        shelfBody.AddChild(shelfScroll);
+
+        var shelfCenter = new CenterContainer();
+        shelfCenter.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+        shelfCenter.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
+        shelfScroll.AddChild(shelfCenter);
+
+        _shopStockGrid = new InventoryGridControl();
+        _shopStockGrid.Configure(5, 5, GetInventoryCellSize() + 4f);
+        shelfCenter.AddChild(_shopStockGrid);
+
+        var packPane = CreateCombatInventoryPane("玩家背包");
+        packPane.CustomMinimumSize = new Vector2(Mathf.Max(320f, inventory.DeploymentPack.Columns * GetInventoryCellSize() + 28f), 0f);
+        packPane.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
+        split.AddChild(packPane);
+        var packBody = packPane.GetChild<VBoxContainer>(0);
+        packBody.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
+
+        var packScroll = new ScrollContainer
+        {
+            HorizontalScrollMode = ScrollContainer.ScrollMode.Auto,
+            VerticalScrollMode = ScrollContainer.ScrollMode.Auto,
+            SizeFlagsVertical = Control.SizeFlags.ExpandFill,
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+            CustomMinimumSize = new Vector2(0f, 220f)
+        };
+        packBody.AddChild(packScroll);
+
+        var packCenter = new CenterContainer();
+        packCenter.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+        packCenter.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
+        packScroll.AddChild(packCenter);
+
+        _shopStashGrid = new InventoryGridControl();
+        _shopStashGrid.Configure(inventory.DeploymentPack.Columns, inventory.DeploymentPack.Rows, GetInventoryCellSize());
+        packCenter.AddChild(_shopStashGrid);
+    }
+
     private void UpdateInventoryInteractionLive(GameState state)
     {
         if (_panelLayer == null || !_panelLayer.Visible)
@@ -450,6 +712,27 @@ public partial class ViewportOverlay
             _basePackGrid.SetBadges(null);
             UpdateInstructionLabel(mode);
             UpdateDragPreview(mode);
+            return;
+        }
+
+        if (mode == ScenePanelMode.Shop)
+        {
+            if (_shopStockGrid == null || _shopStashGrid == null)
+                return;
+
+            EnsureShopStateSynced(state.Save.Inventory);
+            _shopStockGrid.SetHideQuantities(false);
+            _shopStockGrid.SetItems(_shopStockItems);
+            _shopStockGrid.SetBadges(BuildShopStockBadges());
+            _shopStockGrid.SetSelectedItemId(ResolveShopSelectedPreviewId());
+
+            _shopStashGrid.SetHideQuantities(false);
+            _shopStashGrid.SetItems(_panelDeploymentPackItems);
+            _shopStashGrid.SetBadges(null);
+            _shopStashGrid.SetSelectedItemId(null);
+
+            RefreshShopPurchaseDialog();
+            _dragPreview?.SetPreview(null, Vector2.Zero, 32f, false);
             return;
         }
 
@@ -507,6 +790,230 @@ public partial class ViewportOverlay
             _panelQuickSlots = (string?[])activeRun.Inventory.QuickSlots.Clone();
             _combatSyncKey = key;
         }
+    }
+
+    private void EnsureShopStateSynced(InventoryState inventory)
+    {
+        EnsureBaseStateSynced(inventory);
+        if (_shopStockItems.Count == 0)
+            _shopStockItems = BuildShopStockPreviewItems();
+
+        if (string.IsNullOrWhiteSpace(_shopSelectedItemId) || _shopStockItems.All(item => item.ItemId != _shopSelectedItemId))
+            _shopSelectedItemId = _shopStockItems.FirstOrDefault()?.ItemId;
+    }
+
+    private static int ResolveMaxShopPurchaseQuantity(GameState state, string itemId)
+    {
+        if (!ShopData.TryGetAmmoOffer(itemId, out var offer) || offer.PricePerRound <= 0)
+            return 0;
+
+        int low = 0;
+        int high = Math.Max(0, state.Save.Base.Credits / offer.PricePerRound);
+        while (low < high)
+        {
+            int mid = (low + high + 1) / 2;
+            if (CanPurchaseShopAmmo(state, itemId, mid))
+                low = mid;
+            else
+                high = mid - 1;
+        }
+
+        return low;
+    }
+
+    private bool HandleShopPointerPressed(GameState state, Vector2 viewportPosition, bool doubleClick)
+    {
+        EnsureShopStateSynced(state.Save.Inventory);
+
+        if (_shopStockGrid != null && _shopStockGrid.TryGetCellAtViewport(viewportPosition, out var stockCell))
+        {
+            var item = GridInventory.FindItemAtCell(_shopStockItems, stockCell.X, stockCell.Y);
+            if (item == null)
+                return false;
+
+            _shopSelectedItemId = item.ItemId;
+            if (doubleClick)
+                OpenShopPurchaseDialog(state, item.ItemId);
+            else
+                UpdateInventoryInteractionLive(state);
+            return true;
+        }
+
+        return false;
+    }
+
+    private void UpdateShopLabels(GameState state)
+    {
+        if (_shopCreditsLabel == null || _shopSelectionLabel == null || _shopSelectionMetaLabel == null || _shopSelectionHintLabel == null || _shopActionHintLabel == null)
+            return;
+
+        const string priceHint = "货架角标=单发价，托盘角标=总价。";
+        _shopCreditsLabel.Text = $"军需账户 {FormatCredits(state.Save.Base.Credits)}";
+        if (string.IsNullOrWhiteSpace(_shopSelectedItemId) || !_shopStockItems.Any(item => item.ItemId == _shopSelectedItemId))
+        {
+            _shopSelectionLabel.Text = "选择货架格子";
+            _shopSelectionMetaLabel.Text = "左侧货架按行陈列三类弹药，选中后会在右侧生成采购托盘。";
+            _shopSelectionHintLabel.Text = $"上排自动武器，中排榴弹，下排精确武器。{priceHint}";
+            _shopActionHintLabel.Text = "先点货架格子，再点采购托盘里的格子包。";
+            _shopActionHintLabel.AddThemeColorOverride("font_color", Palette.UiMuted);
+            return;
+        }
+
+        var offer = ShopData.AmmoOffersByItemId[_shopSelectedItemId];
+        int owned = CountStoredQuantity(_panelStashItems, _shopSelectedItemId);
+        var definition = ItemData.ById[_shopSelectedItemId];
+        string trayOptions = string.Join(" / ", ShopData.PurchaseQuantities.Select(quantity => $"{quantity}发"));
+        bool canBuy = _shopBuyItems.Count > 0 && CanPurchaseShopAmmo(state, _shopSelectedItemId, _shopBuyItems[0].Quantity);
+
+        _shopSelectionLabel.Text = definition.Label;
+        _shopSelectionMetaLabel.Text = $"{ResolveShopGroupTitle(offer.GroupId)} / 单发 {offer.PricePerRound} 元 / 仓储 {owned} 发";
+        _shopSelectionHintLabel.Text = $"{ResolveShopAmmoHint(_shopSelectedItemId)} {priceHint}";
+        _shopActionHintLabel.Text = _shopBuyItems.Count == 0
+            ? "当前弹药没有生成可购买的格子包。"
+            : canBuy
+                ? $"点击采购托盘中的 {trayOptions} 格子包下单。"
+                : $"{ResolveShopAmmoBlocker(state, _shopSelectedItemId, _shopBuyItems[0].Quantity)}。";
+        _shopActionHintLabel.AddThemeColorOverride("font_color", canBuy ? Palette.Accent : new Color(Palette.UiText, 0.56f));
+    }
+
+    private static List<InventoryItemRecord> BuildShopStockPreviewItems()
+    {
+        var items = new List<InventoryItemRecord>(ShopData.AmmoOffers.Length);
+        var groupRows = new Dictionary<string, int>
+        {
+            ["automatic"] = 0,
+            ["launcher"] = 2,
+            ["precision"] = 4,
+        };
+
+        var groupIndices = new Dictionary<string, int>();
+        foreach (var offer in ShopData.AmmoOffers)
+        {
+            if (!groupRows.TryGetValue(offer.GroupId, out int row))
+                row = 0;
+
+            int column = groupIndices.TryGetValue(offer.GroupId, out var value) ? value : 0;
+            groupIndices[offer.GroupId] = column + 1;
+
+            var item = GridInventory.CreateItemRecord(offer.ItemId, 1, $"shop-stock-{offer.ItemId}");
+            if (item == null)
+                continue;
+
+            item.Quantity = 9999;
+            item.X = column;
+            item.Y = row;
+            items.Add(item);
+        }
+
+        return items;
+    }
+
+    private static List<InventoryItemRecord> BuildShopBuyPreviewItems(string? itemId)
+    {
+        var items = new List<InventoryItemRecord>();
+        if (string.IsNullOrWhiteSpace(itemId))
+            return items;
+
+        for (int index = 0; index < ShopData.PurchaseQuantities.Length; index++)
+        {
+            int quantity = ShopData.PurchaseQuantities[index];
+            var item = GridInventory.CreateItemRecord(itemId, quantity, $"shop-buy-{itemId}-{quantity}");
+            if (item == null)
+                continue;
+
+            item.X = index;
+            item.Y = 0;
+            items.Add(item);
+        }
+
+        return items;
+    }
+
+    private Control CreateShopLegendRow()
+    {
+        var row = new HBoxContainer();
+        row.AddThemeConstantOverride("separation", 8);
+        row.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+        row.AddChild(CreateShopLegendChip("上排", ResolveShopGroupTitle("automatic")));
+        row.AddChild(CreateShopLegendChip("中排", ResolveShopGroupTitle("launcher")));
+        row.AddChild(CreateShopLegendChip("下排", ResolveShopGroupTitle("precision")));
+        return row;
+    }
+
+    private PanelContainer CreateShopLegendChip(string bandLabelText, string groupLabelText)
+    {
+        var chip = new PanelContainer
+        {
+            MouseFilter = Control.MouseFilterEnum.Ignore,
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+        };
+        chip.AddThemeStyleboxOverride("panel", CreateCombatFrameStyle(
+            new Color(Palette.BgOuter, 0.7f),
+            new Color(Palette.Frame, 0.24f),
+            10,
+            8,
+            10,
+            8));
+
+        var body = new VBoxContainer();
+        body.AddThemeConstantOverride("separation", 2);
+        chip.AddChild(body);
+
+        var bandLabel = CreateLabel(10, new Color(Palette.Frame, 0.78f), true, 1.1f, true);
+        bandLabel.Text = bandLabelText;
+        body.AddChild(bandLabel);
+
+        var groupLabel = CreateLabel(12, Palette.UiText, true, 0.2f, true);
+        groupLabel.Text = groupLabelText;
+        body.AddChild(groupLabel);
+        return chip;
+    }
+
+    private Control CreateShopQuantityCueRow()
+    {
+        var row = new HBoxContainer();
+        row.AddThemeConstantOverride("separation", 6);
+        row.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+
+        foreach (int quantity in ShopData.PurchaseQuantities)
+        {
+            var label = CreateLabel(11, new Color(Palette.UiText, 0.58f), true, 0.2f, false);
+            label.Text = $"{quantity}发";
+            label.HorizontalAlignment = HorizontalAlignment.Center;
+            label.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+            row.AddChild(label);
+        }
+
+        return row;
+    }
+
+    private Dictionary<string, string> BuildShopStockBadges()
+    {
+        var badges = new Dictionary<string, string>();
+        foreach (var item in _shopStockItems)
+        {
+            if (ShopData.TryGetAmmoOffer(item.ItemId, out var offer))
+                badges[item.Id] = $"￥{offer.PricePerRound}";
+        }
+
+        return badges;
+    }
+
+    private Dictionary<string, string> BuildShopBuyBadges()
+    {
+        var badges = new Dictionary<string, string>();
+        foreach (var item in _shopBuyItems)
+        {
+            if (ShopData.TryGetAmmoOffer(item.ItemId, out var offer))
+                badges[item.Id] = $"￥{offer.PricePerRound * item.Quantity}";
+        }
+
+        return badges;
+    }
+
+    private string? ResolveShopSelectedPreviewId()
+    {
+        return _shopStockItems.FirstOrDefault(item => item.ItemId == _shopSelectedItemId)?.Id;
     }
 
     private void UpdateCombatWeaponSlotCards()
